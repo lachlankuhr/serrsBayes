@@ -21,12 +21,31 @@
 #'    scaL.sd=0.4, bl.smooth=5, bl.knots=20, loc.mu=peakLocations, loc.sd=c(5,5),
 #'    beta.mu=c(5000,5000), beta.sd=c(5000,5000), noise.sd=200, noise.nu=4)
 #' result <- fitVoigtPeaksSMC(wavenumbers, spectra, lPriors, npart=50, mcSteps=1)
-fitVoigtPeaksSMC <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10000, rate=0.9, mcAR=0.23, mcSteps=10, minESS=npart/2, destDir=NA) {
+fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10000, rate=0.9, mcAR=0.23, mcSteps=10, minESS=npart/2, destDir=NA) {
+  # For development #
+  wl <- wavenumbers
+  spc <- spectra
+  lPriors <- lPriors2
+  npart <- 3000
+  conc <- rep(1.0,nrow(spc))
+  rate <- 0.9
+  mcAR <- 0.23
+  mcSteps <- 10
+  minESS <- npart/2
+  destDir <- NA
+  # #
+  
   N_Peaks <- length(lPriors$loc.mu)
   N_WN_Cal <- length(wl)
   N_Obs_Cal <- nrow(spc)
   lPriors$noise.SS <- lPriors$noise.nu * lPriors$noise.sd^2
   print(paste("SMC with",N_Obs_Cal,"observations at",length(unique(conc)),"unique concentrations,",npart,"particles, and",N_WN_Cal,"wavenumbers."))
+  
+  scale_G_mask <- 1:N_Peaks
+  scale_L_mask <- (N_Peaks+1):(2*N_Peaks)
+  location_mask <- (2*N_Peaks+1):(3*N_Peaks)
+  beta_mask <- (3*N_Peaks+1):(4*N_Peaks)
+  log_likelihood_mask <- Offset_1+2
   
   # Step 0: cubic B-spline basis (Eilers & Marx, 1996)
   ptm <- proc.time()
@@ -58,22 +77,26 @@ fitVoigtPeaksSMC <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10
   # Step 1: Initialization (draw particles from the prior)
   ptm <- proc.time()
   Sample<-matrix(numeric(npart*(4*N_Peaks+3+N_Obs_Cal)),nrow=npart)
-  Sample[,1:N_Peaks] <- rlnorm(N_Peaks*npart, lPriors$scaG.mu, lPriors$scaG.sd)
-  Sample[,(N_Peaks+1):(2*N_Peaks)] <- rlnorm(N_Peaks*npart, lPriors$scaL.mu, lPriors$scaL.sd)
+  Sample[,scale_G_mask] <- rlnorm(N_Peaks*npart, lPriors$scaG.mu, lPriors$scaG.sd)
+  Sample[,scale_L_mask] <- rlnorm(N_Peaks*npart, lPriors$scaL.mu, lPriors$scaL.sd)
   # enforce window and identifiability constrants on peak locations
   for (k in 1:npart) {
     propLoc <- rtruncnorm(N_Peaks, a=min(wl), b=max(wl), mean=lPriors$loc.mu, sd=lPriors$loc.sd)
-    Sample[k,(2*N_Peaks+1):(3*N_Peaks)] <- sort(propLoc)
+    Sample[k,location_mask] <- sort(propLoc)
   }
   # optional prior on beta
   if (exists("beta.mu", lPriors) && exists("beta.sd", lPriors)) {
-    for (j in 1:N_Peaks) {
+    for (j in scale_G_mask) {
       Sample[,3*N_Peaks+j] <- rtruncnorm(npart, a=0, mean=lPriors$beta.mu[j], sd=lPriors$beta.sd[j])
     }
   } else { # otherwise, use uniform prior
-    Sample[,(3*N_Peaks+1):(4*N_Peaks)] <- runif(N_Peaks*npart, 0, diff(range(spc))/max(conc))
+    Sample[,beta_mask] <- runif(N_Peaks*npart, 0, diff(range(spc))/max(conc))
   }
+  
   Offset_1<-4*N_Peaks
+  
+  weight_mask <- Offset_1+1
+  
   Offset_2<-Offset_1 + N_Obs_Cal + 1
   Cal_I <- 1
   Sample[,Offset_2+1] <- 1/rgamma(npart, lPriors$noise.nu/2, lPriors$noise.SS/2)
@@ -88,23 +111,23 @@ fitVoigtPeaksSMC <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10
   ai_Cal <- a0_Cal + N_WN_Cal/2
   b0_Cal <- lPriors$noise.SS/2
   for(k in 1:npart) {
-    Sigi <- conc[Cal_I] * mixedVoigt(Sample[k,2*N_Peaks+(1:N_Peaks)], Sample[k,(1:N_Peaks)],
-                                     Sample[k,N_Peaks+(1:N_Peaks)], Sample[k,3*N_Peaks+(1:N_Peaks)], wl)
+    Sigi <- conc[Cal_I] * mixedVoigt(Sample[k,2*N_Peaks+(scale_G_mask)], Sample[k,(scale_G_mask)],
+                                     Sample[k,N_Peaks+(scale_G_mask)], Sample[k,3*N_Peaks+(scale_G_mask)], wl)
     Obsi <- spc[Cal_I,] - Sigi
     lambda <- lPriors$bl.smooth # fixed smoothing penalty
     L_Ev <- computeLogLikelihood(Obsi, lambda, lPriors$noise.nu, lPriors$noise.SS,
                                  X_Cal, Rsvd$d, lPriors$bl.precision, lPriors$bl.XtX,
                                  lPriors$bl.orthog, lPriors$bl.Ru)
-    Sample[k,Offset_1+2]<-L_Ev
+    Sample[k,log_likelihood_mask]<-L_Ev
   }
-  Sample[,Offset_1+1]<-rep(1/npart,npart)
+  Sample[,weight_mask]<-rep(1/npart,npart)
   T_Sample<-Sample
-  T_Sample[,1:N_Peaks]<-log(T_Sample[,1:N_Peaks]) # scaG
-  T_Sample[,(N_Peaks+1):(2*N_Peaks)]<-log(T_Sample[,(N_Peaks+1):(2*N_Peaks)]) # scaL
-  T_Sample[,(3*N_Peaks+1):(4*N_Peaks)]<-log(T_Sample[,(3*N_Peaks+1):(4*N_Peaks)]) # amp/beta
+  T_Sample[,scale_G_mask]<-log(T_Sample[,scale_G_mask]) # scaG
+  T_Sample[,scale_L_mask]<-log(T_Sample[,scale_L_mask]) # scaL
+  T_Sample[,beta_mask]<-log(T_Sample[,beta_mask]) # amp/beta
   iTime <- proc.time() - ptm
   
-  ESS<-1/sum(Sample[,Offset_1+1]^2)
+  ESS<-1/sum(Sample[,weight_mask]^2)
   MC_Steps<-numeric(1000)
   MC_AR<-numeric(1000)
   ESS_Hist<-numeric(1000)
@@ -119,7 +142,7 @@ fitVoigtPeaksSMC <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10
   Kappa_Hist[1]<-0
   Time_Hist[1]<-iTime[3]
   print(paste("Step 1: initialization for",N_Peaks,"Voigt peaks took",iTime[3],"sec."))
-  print(colMeans(Sample[,(3*N_Peaks+1):(4*N_Peaks)]))
+  print(colMeans(Sample[,beta_mask]))
   
   i<-1
   Cal_I <- 1
@@ -137,7 +160,7 @@ fitVoigtPeaksSMC <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10
       Max_Kappa<-1
       Kappa<-1
       
-      Temp_w<-Sample[,Offset_1+1]*exp((Kappa-Kappa_Hist[i-1])*(Sample[,Offset_1+Cal_I+1]-max(Sample[,Offset_1+Cal_I+1])))
+      Temp_w<-Sample[,weight_mask]*exp((Kappa-Kappa_Hist[i-1])*(Sample[,Offset_1+Cal_I+1]-max(Sample[,Offset_1+Cal_I+1])))
       Temp_W<-Temp_w/sum(Temp_w)
       
       US1<-unique(Sample[,1])
@@ -159,7 +182,7 @@ fitVoigtPeaksSMC <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10
           
           Kappa<-0.5*(Min_Kappa+Max_Kappa)
           
-          Temp_w<-Sample[,Offset_1+1]*exp((Kappa-Kappa_Hist[i-1])*(Sample[,Offset_1+Cal_I+1]-max(Sample[,Offset_1+Cal_I+1])))
+          Temp_w<-Sample[,weight_mask]*exp((Kappa-Kappa_Hist[i-1])*(Sample[,Offset_1+Cal_I+1]-max(Sample[,Offset_1+Cal_I+1])))
           Temp_W<-Temp_w/sum(Temp_w)
           
           US1<-unique(Sample[,1])
@@ -175,7 +198,7 @@ fitVoigtPeaksSMC <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10
         }
       }
       
-      Sample[,Offset_1+1]<-Temp_W
+      Sample[,weight_mask]<-Temp_W
       Kappa_Hist[i]<-Kappa
       ESS_Hist[i]<-Temp_ESS
       
@@ -183,19 +206,19 @@ fitVoigtPeaksSMC <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10
       
       Acc<-0
       
-      Prop_Info<-cov.wt(T_Sample[,1:(4*N_Peaks)],wt=Sample[,Offset_1+1])
+      Prop_Info<-cov.wt(T_Sample[,1:(4*N_Peaks)],wt=Sample[,weight_mask])
       Prop_Mu<-Prop_Info$center
       Prop_Cor<-cov2cor(Prop_Info$cov)
       
       if(ESS_Hist[i] < minESS){
         # simple multinomial resampling
         ptm <- proc.time()
-        ReSam<-sample(1:npart,size=npart,replace=T,prob=Sample[,Offset_1+1])
+        ReSam<-sample(1:npart,size=npart,replace=T,prob=Sample[,weight_mask])
         Sample<-Sample[ReSam,]
         T_Sample<-T_Sample[ReSam,]
         
-        Sample[,Offset_1+1]<-rep(1/npart,npart)
-        T_Sample[,Offset_1+1]<-rep(1/npart,npart)
+        Sample[,weight_mask]<-rep(1/npart,npart)
+        T_Sample[,weight_mask]<-rep(1/npart,npart)
         print(paste("*** Resampling with",length(unique(T_Sample[,1])),"unique indices took",(proc.time()-ptm)[3],"sec ***"))
       }
       
@@ -211,7 +234,7 @@ fitVoigtPeaksSMC <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10
       
       Temp_W<-numeric(N_UP)
       for(k in 1:N_UP){
-        Temp_W[k]<-sum(T_Sample[which(T_Sample[,1]==US1[k]),Offset_1+1])
+        Temp_W[k]<-sum(T_Sample[which(T_Sample[,1]==US1[k]),weight_mask])
       }
       
       Temp_ESS<-1/sum(Temp_W^2)
@@ -233,7 +256,7 @@ fitVoigtPeaksSMC <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10
         N_UP<-length(US1)
         Temp_W<-numeric(N_UP)
         for(k in 1:N_UP){
-          Temp_W[k]<-sum(Sample[which(Sample[,1]==US1[k]),Offset_1+1])
+          Temp_W[k]<-sum(Sample[which(Sample[,1]==US1[k]),weight_mask])
         }
         Temp_ESS<-1/sum(Temp_W^2)
         print(paste(mh_acc,"M-H proposals accepted. Temp ESS is",Temp_ESS))
@@ -252,7 +275,7 @@ fitVoigtPeaksSMC <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10
       print(paste("Interim results saved to",iFile))
     }
     
-    print(colMeans(Sample[,(3*N_Peaks+1):(4*N_Peaks)]))
+    print(colMeans(Sample[,beta_mask]))
     print(paste0("Iteration ",i," took ",iTime[3],"sec. for ",MC_Steps[i]," MCMC loops (acceptance rate ",MC_AR[i],")"))
     if (Kappa >= 1 || MC_AR[i] < 1/npart) {
       break
@@ -263,9 +286,10 @@ fitVoigtPeaksSMC <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10
     print(paste("SMC collapsed due to MH acceptance rate",
                 Acc,"/",(npart*MC_Steps[i]),"=", MC_AR[i]))
   }
-  return(list(priors=lPriors, ess=ESS_Hist[1:i], weights=Sample[,Offset_1+1], kappa=Kappa_Hist[1:i],
+  
+  return(list(priors=lPriors, ess=ESS_Hist[1:i], weights=Sample[,weight_mask], kappa=Kappa_Hist[1:i],
               accept=MC_AR[1:i], mhSteps=MC_Steps[1:i], essAR=ESS_AR[1:i], times=Time_Hist[1:i],
-              scale_G=Sample[,1:N_Peaks], scale_L=Sample[,(N_Peaks+1):(2*N_Peaks)],
-              location=Sample[,(2*N_Peaks+1):(3*N_Peaks)], beta=Sample[,(3*N_Peaks+1):(4*N_Peaks)],
+              scale_G=Sample[,scale_G_mask], scale_L=Sample[,scale_L_mask],
+              location=Sample[,location_mask], beta=Sample[,beta_mask],
               sigma=sqrt(Sample[,Offset_2+1]), lambda=Sample[,Offset_2+1]/Sample[,Offset_2+2]))
 }
