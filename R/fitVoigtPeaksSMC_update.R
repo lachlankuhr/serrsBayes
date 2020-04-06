@@ -45,7 +45,6 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
   scale_L_mask <- (N_Peaks+1):(2*N_Peaks)
   location_mask <- (2*N_Peaks+1):(3*N_Peaks)
   beta_mask <- (3*N_Peaks+1):(4*N_Peaks)
-  log_likelihood_mask <- Offset_1+2
   
   # Step 0: cubic B-spline basis (Eilers & Marx, 1996)
   ptm <- proc.time()
@@ -94,7 +93,7 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
   }
   
   Offset_1<-4*N_Peaks
-  
+  log_likelihood_mask <- Offset_1+2
   weight_mask <- Offset_1+1
   
   Offset_2<-Offset_1 + N_Obs_Cal + 1
@@ -150,57 +149,55 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
   Alpha<-rate
   MC_AR[1]<-mcAR
   MCMC_MP<-1
+  
+  Kappa <- 0
+  
   repeat{
     i<-i+1
     
     iTime<-system.time({
-      
       ptm <- proc.time()
-      Min_Kappa<-Kappa_Hist[i-1]
-      Max_Kappa<-1
-      Kappa<-1
       
-      Temp_w<-Sample[,weight_mask]*exp((Kappa-Kappa_Hist[i-1])*(Sample[,Offset_1+Cal_I+1]-max(Sample[,Offset_1+Cal_I+1])))
-      Temp_W<-Temp_w/sum(Temp_w)
+      # Determine gamma_{t+1}
+      ess1 <- calc_ESS(1, Kappa, Sample[,weight_mask], Sample[,log_likelihood_mask])
       
-      US1<-unique(Sample[,1])
-      N_UP<-length(US1)
-      
-      Temp_W2<-numeric(N_UP)
-      for(k in 1:N_UP){
-        Temp_W2[k]<-sum(Temp_W[which(Sample[,1]==US1[k])])
+      # Bisection method to maintain ESS at N/2
+      if (ess1 > npart/2) {
+        new_Kappa = 1
+      } else {
+        bi_section = uniroot(
+          function(new_Kappa) calc_ESS(new_Kappa, Kappa, Sample[,weight_mask], Sample[,log_likelihood_mask]) 
+          - npart/2,
+          lower = Kappa, 
+          upper = 1
+        )
+        new_Kappa <- bi_section$root
       }
+      print(new_Kappa)
       
-      Temp_ESS<-1/sum(Temp_W2^2)
-      if(Temp_ESS<(Alpha*ESS_AR[i-1])){
-        while(abs(Temp_ESS-((Alpha*ESS_AR[i-1])))>1 & !isTRUE(all.equal(Kappa, Min_Kappa))){
-          if(Temp_ESS<((Alpha*ESS_AR[i-1]))){
-            Max_Kappa<-Kappa
-          } else{
-            Min_Kappa<-Kappa
-          }
-          
-          Kappa<-0.5*(Min_Kappa+Max_Kappa)
-          
-          Temp_w<-Sample[,weight_mask]*exp((Kappa-Kappa_Hist[i-1])*(Sample[,Offset_1+Cal_I+1]-max(Sample[,Offset_1+Cal_I+1])))
-          Temp_W<-Temp_w/sum(Temp_w)
-          
-          US1<-unique(Sample[,1])
-          N_UP<-length(US1)
-          
-          Temp_W2<-numeric(N_UP)
-          for(k in 1:N_UP){
-            Temp_W2[k]<-sum(Temp_W[which(Sample[,1]==US1[k])])
-          }
-          
-          Temp_ESS<-1/sum(Temp_W2^2)
-          
-        }
-      }
+      # Reweighting
+      log_weights <- log(Sample[,weight_mask]) + (new_Kappa - Kappa) * 
+        Sample[,log_likelihood_mask]
       
-      Sample[,weight_mask]<-Temp_W
-      Kappa_Hist[i]<-Kappa
-      ESS_Hist[i]<-Temp_ESS
+      ## Log evidence
+      #log_evidence <- log_evidence + logSumExp(log_weights)
+      
+      # Numerically stabilise before exponentiating
+      log_weights <- log_weights - max(log_weights)
+      Sample[,weight_mask] <- exp(log_weights)
+      
+      # Normalise
+      Sample[,weight_mask] <- Sample[,weight_mask] / sum(Sample[,weight_mask])
+      
+      # Return the ESS
+      Temp_ESS <- 1/sum(Sample[,weight_mask]^2)
+      
+      ## THIS MAY BE WRONG
+      ## IS IT USING KAPPA = 0 AT ANY STAGE? 
+      ## LOOK AT FINAL LINE IN WHILE LOOP WHERE I SWAP IT
+      Kappa_Hist[i] <- Kappa
+      
+      ESS_Hist[i] <- Temp_ESS
       
       print(paste0("Reweighting took ",(proc.time()-ptm)[3],"sec. for ESS ",Temp_ESS," with new kappa ",Kappa,"."))
       
@@ -210,57 +207,38 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
       Prop_Mu<-Prop_Info$center
       Prop_Cor<-cov2cor(Prop_Info$cov)
       
-      if(ESS_Hist[i] < minESS){
-        # simple multinomial resampling
-        ptm <- proc.time()
-        ReSam<-sample(1:npart,size=npart,replace=T,prob=Sample[,weight_mask])
-        Sample<-Sample[ReSam,]
-        T_Sample<-T_Sample[ReSam,]
-        
-        Sample[,weight_mask]<-rep(1/npart,npart)
-        T_Sample[,weight_mask]<-rep(1/npart,npart)
-        print(paste("*** Resampling with",length(unique(T_Sample[,1])),"unique indices took",(proc.time()-ptm)[3],"sec ***"))
-      }
       
-      for(j in 1:(4*N_Peaks)){
-        Prop_Mu[j]<-median(T_Sample[,j])
-        MADs[j]<-median(abs((T_Sample[,j])-median(T_Sample[,j])))
-      }
+      # simple multinomial resampling
+      ptm <- proc.time()
+      ReSam<-sample(1:npart,size=npart,replace=T,prob=Sample[,weight_mask])
+      Sample<-Sample[ReSam,]
+      T_Sample<-T_Sample[ReSam,]
       
-      Prop_Cov<-(1.4826*MADs)%*%t(1.4826*MADs)*Prop_Cor
+      Sample[,weight_mask]<-rep(1/npart,npart)
+      T_Sample[,weight_mask]<-rep(1/npart,npart)
+      print(paste("*** Resampling with",length(unique(T_Sample[,1])),"unique indices took",(proc.time()-ptm)[3],"sec ***"))
       
-      US1<-unique(T_Sample[,1])
-      N_UP<-length(US1)
-      
-      Temp_W<-numeric(N_UP)
-      for(k in 1:N_UP){
-        Temp_W[k]<-sum(T_Sample[which(T_Sample[,1]==US1[k]),weight_mask])
-      }
-      
-      Temp_ESS<-1/sum(Temp_W^2)
-      ESS_AR[i]<-Temp_ESS
-      
-      if(!is.na(MC_AR[i-1])){
-        MCMC_MP<-2^(-5*(0.23-MC_AR[i-1]))*MCMC_MP
-      }
-      mhCov <- MCMC_MP*(2.38^2/(4*N_Peaks))*Prop_Cov
+      mhCov <- Prop_Info$cov
       mhChol <- t(chol(mhCov, pivot = FALSE)) # error if not non-negative definite
       
       for(mcr in 1:mcSteps){
         MC_Steps[i]<-MC_Steps[i]+1
         mh_acc <- mhUpdateVoigt(spc, Cal_I, Kappa_Hist[i], conc, wl, Sample, T_Sample, mhChol, lPriors)
+        for(k in 1:npart) {
+          Sigi <- conc[Cal_I] * mixedVoigt(Sample[k,2*N_Peaks+(scale_G_mask)], Sample[k,(scale_G_mask)],
+                                           Sample[k,N_Peaks+(scale_G_mask)], Sample[k,3*N_Peaks+(scale_G_mask)], wl)
+          Obsi <- spc[Cal_I,] - Sigi
+          lambda <- lPriors$bl.smooth # fixed smoothing penalty
+          L_Ev <- computeLogLikelihood(Obsi, lambda, lPriors$noise.nu, lPriors$noise.SS,
+                                       X_Cal, Rsvd$d, lPriors$bl.precision, lPriors$bl.XtX,
+                                       lPriors$bl.orthog, lPriors$bl.Ru)
+          Sample[k,log_likelihood_mask]<-L_Ev
+        }
         Acc <- Acc + mh_acc
         
-        # update effective sample size
-        US1<-unique(Sample[,1])
-        N_UP<-length(US1)
-        Temp_W<-numeric(N_UP)
-        for(k in 1:N_UP){
-          Temp_W[k]<-sum(Sample[which(Sample[,1]==US1[k]),weight_mask])
-        }
-        Temp_ESS<-1/sum(Temp_W^2)
-        print(paste(mh_acc,"M-H proposals accepted. Temp ESS is",Temp_ESS))
-        ESS_AR[i]<-Temp_ESS
+        Temp_ESS <- 1/sum(Sample[,weight_mask]^2)
+        print(paste(mh_acc,"M-H proposals accepted."))
+        ESS_AR[i] <- Temp_ESS
       }
       
       MC_AR[i]<-Acc/(npart*MC_Steps[i])
@@ -280,6 +258,8 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
     if (Kappa >= 1 || MC_AR[i] < 1/npart) {
       break
     }
+    # Update Kappa
+    Kappa = new_Kappa
   }
   
   if (Kappa < 1 && MC_AR[i] < 1/npart) {
@@ -292,4 +272,23 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
               scale_G=Sample[,scale_G_mask], scale_L=Sample[,scale_L_mask],
               location=Sample[,location_mask], beta=Sample[,beta_mask],
               sigma=sqrt(Sample[,Offset_2+1]), lambda=Sample[,Offset_2+1]/Sample[,Offset_2+2]))
+}
+
+
+# Calculate the ESS
+# Used for selecting temperatures adaptively
+calc_ESS <- function(new_gamma, old_gamma, weights, log_like) {
+  # By notes
+  log_weights <- log(weights) + (new_gamma - old_gamma) * 
+    log_like
+  
+  # Numerically stabilise before exponentiating
+  log_weights <- log_weights - max(log_weights)
+  weights <- exp(log_weights)
+  
+  # Normalise
+  weights <- weights / sum(weights)
+  
+  # Return the ESS
+  return(1/sum(weights^2))
 }
