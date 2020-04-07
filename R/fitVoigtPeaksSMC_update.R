@@ -224,16 +224,6 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
       for(mcr in 1:mcSteps){
         MC_Steps[i]<-MC_Steps[i]+1
         mh_acc <- mhUpdateVoigt(spc, Cal_I, Kappa_Hist[i], conc, wl, Sample, T_Sample, mhChol, lPriors)
-        for(k in 1:npart) {
-          Sigi <- conc[Cal_I] * mixedVoigt(Sample[k,2*N_Peaks+(scale_G_mask)], Sample[k,(scale_G_mask)],
-                                           Sample[k,N_Peaks+(scale_G_mask)], Sample[k,3*N_Peaks+(scale_G_mask)], wl)
-          Obsi <- spc[Cal_I,] - Sigi
-          lambda <- lPriors$bl.smooth # fixed smoothing penalty
-          L_Ev <- computeLogLikelihood(Obsi, lambda, lPriors$noise.nu, lPriors$noise.SS,
-                                       X_Cal, Rsvd$d, lPriors$bl.precision, lPriors$bl.XtX,
-                                       lPriors$bl.orthog, lPriors$bl.Ru)
-          Sample[k,log_likelihood_mask]<-L_Ev
-        }
         Acc <- Acc + mh_acc
         
         Temp_ESS <- 1/sum(Sample[,weight_mask]^2)
