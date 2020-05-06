@@ -22,24 +22,19 @@
 #'    beta.mu=c(5000,5000), beta.sd=c(5000,5000), noise.sd=200, noise.nu=4)
 #' result <- fitVoigtPeaksSMC(wavenumbers, spectra, lPriors, npart=50, mcSteps=1)
 fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10000, rate=0.9, mcAR=0.23, mcSteps=10, minESS=npart/2, destDir=NA) {
-  # For development #
-  wl <- wavenumbers
-  spc <- spectra
-  lPriors <- lPriors2
-  npart <- 3000
-  conc <- rep(1.0,nrow(spc))
-  rate <- 0.9
-  mcAR <- 0.23
-  mcSteps <- 10
-  minESS <- npart/2
-  destDir <- NA
-  # #
+  #sourceCpp("/home/lachlan/Honours/serrsBayes/src/mixVoigt.cpp", verbose = FALSE, showOutput = FALSE)
+  
+  # Begin timing init
+  init_start_time <- Sys.time()
   
   N_Peaks <- length(lPriors$loc.mu)
   N_WN_Cal <- length(wl)
   N_Obs_Cal <- nrow(spc)
   lPriors$noise.SS <- lPriors$noise.nu * lPriors$noise.sd^2
   print(paste("SMC with",N_Obs_Cal,"observations at",length(unique(conc)),"unique concentrations,",npart,"particles, and",N_WN_Cal,"wavenumbers."))
+  
+  c_c <- 0.01 # 1-c is probability at least one move
+  prev_accept_rate <- 0.5 # Estimated for the first iteration. Will updated as iterations pass
   
   scale_G_mask <- 1:N_Peaks
   scale_L_mask <- (N_Peaks+1):(2*N_Peaks)
@@ -152,89 +147,58 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
   
   Kappa <- 0
   
+  # Evidence
+  log_evidence <- 0
+  
+  # End timing init
+  init_end_time <- Sys.time()
+  init_time_taken <- init_end_time - init_start_time
+  
+  print(paste0("Took ", init_time_taken, " seconds to init."))
+  
+  par(mfrow=c(2,6))
+  plot(density(Sample[,location_mask[1]]), main=paste0("Iteration: ", i))
   repeat{
+    if (i %% 2 == 0) {
+      plot(density(Sample[,location_mask[1]]), main=paste0("Iteration: ", i)) 
+    }
+    
     i<-i+1
     
-    iTime<-system.time({
-      ptm <- proc.time()
-      
-      # Determine gamma_{t+1}
-      ess1 <- calc_ESS(1, Kappa, Sample[,weight_mask], Sample[,log_likelihood_mask])
-      
-      # Bisection method to maintain ESS at N/2
-      if (ess1 > npart/2) {
-        new_Kappa = 1
-      } else {
-        bi_section = uniroot(
-          function(new_Kappa) calc_ESS(new_Kappa, Kappa, Sample[,weight_mask], Sample[,log_likelihood_mask]) 
-          - npart/2,
-          lower = Kappa, 
-          upper = 1
-        )
-        new_Kappa <- bi_section$root
-      }
-      print(new_Kappa)
-      
-      # Reweighting
-      log_weights <- log(Sample[,weight_mask]) + (new_Kappa - Kappa) * 
-        Sample[,log_likelihood_mask]
-      
-      ## Log evidence
-      #log_evidence <- log_evidence + logSumExp(log_weights)
-      
-      # Numerically stabilise before exponentiating
-      log_weights <- log_weights - max(log_weights)
-      Sample[,weight_mask] <- exp(log_weights)
-      
-      # Normalise
-      Sample[,weight_mask] <- Sample[,weight_mask] / sum(Sample[,weight_mask])
-      
-      # Return the ESS
-      Temp_ESS <- 1/sum(Sample[,weight_mask]^2)
-      
-      ## THIS MAY BE WRONG
-      ## IS IT USING KAPPA = 0 AT ANY STAGE? 
-      ## LOOK AT FINAL LINE IN WHILE LOOP WHERE I SWAP IT
-      Kappa_Hist[i] <- Kappa
-      
-      ESS_Hist[i] <- Temp_ESS
-      
-      print(paste0("Reweighting took ",(proc.time()-ptm)[3],"sec. for ESS ",Temp_ESS," with new kappa ",Kappa,"."))
-      
-      Acc<-0
-      
-      Prop_Info<-cov.wt(T_Sample[,1:(4*N_Peaks)],wt=Sample[,weight_mask])
-      Prop_Mu<-Prop_Info$center
-      Prop_Cor<-cov2cor(Prop_Info$cov)
-      
-      
-      # simple multinomial resampling
-      ptm <- proc.time()
-      ReSam<-sample(1:npart,size=npart,replace=T,prob=Sample[,weight_mask])
-      Sample<-Sample[ReSam,]
-      T_Sample<-T_Sample[ReSam,]
-      
-      Sample[,weight_mask]<-rep(1/npart,npart)
-      T_Sample[,weight_mask]<-rep(1/npart,npart)
-      print(paste("*** Resampling with",length(unique(T_Sample[,1])),"unique indices took",(proc.time()-ptm)[3],"sec ***"))
-      
-      mhCov <- Prop_Info$cov
-      mhChol <- t(chol(mhCov, pivot = FALSE)) # error if not non-negative definite
-      
-      for(mcr in 1:mcSteps){
-        MC_Steps[i]<-MC_Steps[i]+1
-        mh_acc <- mhUpdateVoigt(spc, Cal_I, Kappa_Hist[i], conc, wl, Sample, T_Sample, mhChol, lPriors)
-        Acc <- Acc + mh_acc
-        
-        Temp_ESS <- 1/sum(Sample[,weight_mask]^2)
-        print(paste(mh_acc,"M-H proposals accepted."))
-        ESS_AR[i] <- Temp_ESS
-      }
-      
-      MC_AR[i]<-Acc/(npart*MC_Steps[i])
-    })
     
-    Time_Hist[i]<-iTime[3]
+    ptm <- proc.time()
+    
+    # Determine gamma_{t+1}
+    new_Kappa <- calculate_new_gamma(Kappa, Sample, log_likelihood_mask, npart, weight_mask)
+    
+    # Reweighting
+    reweight_res <- reweight_particles(Sample, weight_mask, log_likelihood_mask, new_Kappa, Kappa, log_evidence)
+    Temp_ESS <- reweight_res$Temp_ESS
+    Sample <- reweight_res$Sample
+    log_evidence <- reweight_res$log_evidence
+    
+    # Update records
+    Kappa_Hist[i] <- Kappa
+    ESS_Hist[i] <- Temp_ESS
+    
+    print(paste0("Reweighting took ",(proc.time()-ptm)[3],"sec. for ESS ",Temp_ESS," with new kappa ",Kappa,"."))
+    
+    
+    # Simple multinomial resampling
+    resample_res <- resample_particles(npart, Sample, T_Sample, weight_mask)
+    Sample <- resample_res$Sample
+    T_Sample <- resample_res$T_Sample
+
+    # Move particles
+    move_particles_res <- move_particles(Sample, T_Sample, N_Peaks, npart, weight_mask, MC_Steps, i, 
+                                         spc, Cal_I, Kappa_Hist, conc, wl, lPriors, ESS_AR, prev_accept_rate, c_c)
+    MC_Steps <- move_particles_res$MC_Steps
+    ESS_AR <- move_particles_res$ESS_AR
+    Temp_ESS <- move_particles_res$Temp_ESS
+    Acc <- move_particles_res$Acc
+    Temp_ESS <- move_particles_res$Temp_ESS
+    
+    MC_AR[i] <- Acc/(npart*MC_Steps[i])
     
     if (!is.na(destDir) && file.exists(destDir)) {
       iFile<-paste0(destDir,"/Iteration_",i,"/")
@@ -244,7 +208,7 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
     }
     
     print(colMeans(Sample[,beta_mask]))
-    print(paste0("Iteration ",i," took ",iTime[3],"sec. for ",MC_Steps[i]," MCMC loops (acceptance rate ",MC_AR[i],")"))
+    print(paste0("Iteration ",i,": MCMC loops (acceptance rate ",MC_AR[i],")"))
     if (Kappa >= 1 || MC_AR[i] < 1/npart) {
       break
     }
@@ -261,9 +225,103 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
               accept=MC_AR[1:i], mhSteps=MC_Steps[1:i], essAR=ESS_AR[1:i], times=Time_Hist[1:i],
               scale_G=Sample[,scale_G_mask], scale_L=Sample[,scale_L_mask],
               location=Sample[,location_mask], beta=Sample[,beta_mask],
-              sigma=sqrt(Sample[,Offset_2+1]), lambda=Sample[,Offset_2+1]/Sample[,Offset_2+2]))
+              sigma=sqrt(Sample[,Offset_2+1]), lambda=Sample[,Offset_2+1]/Sample[,Offset_2+2],
+              log_evid = log_evidence))
 }
 
+move_particles <- function(Sample, T_Sample, N_Peaks, npart, weight_mask, MC_Steps, i, 
+                           spc, Cal_I, Kappa_Hist, conc, wl, lPriors, ESS_AR, prev_accept_rate, c_c) {
+  
+  Prop_Info<-cov.wt(T_Sample[,1:(4*N_Peaks)],wt=Sample[,weight_mask])
+  mhCov <- Prop_Info$cov * 0.1
+  mhChol <- t(chol(mhCov, pivot = FALSE)) # error if not non-negative definite
+  
+  # Do 1 iteration to adaptively chose MCMC repeats
+  MC_Steps[i] <- MC_Steps[i] + 1
+  mh_acc <- mhUpdateVoigt(spc, Cal_I, Kappa_Hist[i], conc, wl, Sample, T_Sample, mhChol, lPriors)
+  prelim_accept_rate <- mh_acc / npart
+  C <- ifelse(prev_accept_rate == 0, 100, ceiling(log(c_c)/log(1-prelim_accept_rate))) 
+  print(paste("MCMC repeats is ", C))
+  Acc <- 0
+  Acc <- Acc + mh_acc
+  
+  Temp_ESS <- 1/sum(Sample[,weight_mask]^2)
+  ESS_AR[i] <- Temp_ESS
+  
+  for(mcr in 2:C) {
+    MC_Steps[i] <- MC_Steps[i] + 1
+    mh_acc <- mhUpdateVoigt(spc, Cal_I, Kappa_Hist[i], conc, wl, Sample, T_Sample, mhChol, lPriors)
+    Acc <- Acc + mh_acc
+    
+    Temp_ESS <- 1/sum(Sample[,weight_mask]^2)
+    print(paste(mh_acc,"M-H proposals accepted."))
+    ESS_AR[i] <- Temp_ESS
+  }
+  
+  return(list(
+    MC_Steps = MC_Steps,
+    ESS_AR = ESS_AR,
+    Temp_ESS = Temp_ESS, 
+    Acc = Acc,
+    Temp_ESS = Temp_ESS
+  ))
+}
+
+# Reweight
+reweight_particles <- function(Sample, weight_mask, log_likelihood_mask, new_Kappa, Kappa, log_evidence) {
+  log_weights <- log(Sample[,weight_mask]) + (new_Kappa - Kappa) * 
+    Sample[,log_likelihood_mask]
+  
+  ## Log evidence
+  log_evidence <- log_evidence + logSumExp(log_weights)
+  
+  # Numerically stabilise before exponentiating
+  log_weights <- log_weights - max(log_weights)
+  Sample[,weight_mask] <- exp(log_weights)
+  
+  # Normalise
+  Sample[,weight_mask] <- Sample[,weight_mask] / sum(Sample[,weight_mask])
+  
+  # Return the ESS
+  Temp_ESS <- 1/sum(Sample[,weight_mask]^2)
+  
+  return(list(log_evidence=log_evidence, Sample=Sample, Temp_ESS=Temp_ESS))
+}
+
+# Resampling 
+resample_particles <- function(npart, Sample, T_Sample, weight_mask) {
+  ptm <- proc.time()
+  ReSam<-sample(1:npart, size=npart, replace=T, prob=Sample[,weight_mask])
+  Sample<-Sample[ReSam,]
+  T_Sample<-T_Sample[ReSam,]
+  
+  Sample[,weight_mask]<-rep(1/npart,npart)
+  T_Sample[,weight_mask]<-rep(1/npart,npart)
+  
+  print(paste("*** Resampling with",length(unique(T_Sample[,1])),"unique indices took",(proc.time()-ptm)[3],"sec ***"))
+  
+  return(list(Sample = Sample, T_Sample = T_Sample))
+}
+
+# Calculate new gamma
+calculate_new_gamma <- function(Kappa, Sample, log_likelihood_mask, npart, weight_mask) {
+  ess1 <- calc_ESS(1, Kappa, Sample[,weight_mask], Sample[,log_likelihood_mask])
+  
+  # Bisection method to maintain ESS at N/2
+  if (ess1 > npart/2) {
+    new_Kappa = 1
+  } else {
+    bi_section = uniroot(
+      function(new_Kappa) calc_ESS(new_Kappa, Kappa, Sample[,weight_mask], Sample[,log_likelihood_mask]) 
+      - npart/2,
+      lower = Kappa, 
+      upper = 1
+    )
+    new_Kappa <- bi_section$root
+  }
+  print(new_Kappa)
+  return(new_Kappa)
+}
 
 # Calculate the ESS
 # Used for selecting temperatures adaptively
