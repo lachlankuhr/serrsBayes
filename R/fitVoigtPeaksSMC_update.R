@@ -33,7 +33,7 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
   lPriors$noise.SS <- lPriors$noise.nu * lPriors$noise.sd^2
   print(paste("SMC with",N_Obs_Cal,"observations at",length(unique(conc)),"unique concentrations,",npart,"particles, and",N_WN_Cal,"wavenumbers."))
   
-  c_c <- 0.01 # 1-c is probability at least one move
+  c_c <- 0.05 # 1-c is probability at least one move
   prev_accept_rate <- 0.5 # Estimated for the first iteration. Will updated as iterations pass
   
   scale_G_mask <- 1:N_Peaks
@@ -233,17 +233,37 @@ move_particles <- function(Sample, T_Sample, N_Peaks, npart, weight_mask, MC_Ste
                            spc, Cal_I, Kappa_Hist, conc, wl, lPriors, ESS_AR, prev_accept_rate, c_c) {
   
   Prop_Info<-cov.wt(T_Sample[,1:(4*N_Peaks)],wt=Sample[,weight_mask])
-  mhCov <- Prop_Info$cov * 0.1
-  mhChol <- t(chol(mhCov, pivot = FALSE)) # error if not non-negative definite
   
+  possible_scaling_factors <- c(0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.25)
+  suggested_repeats <- rep(0, length(possible_scaling_factors))
+  ratios <- rep(0, length(possible_scaling_factors))
   # Do 1 iteration to adaptively chose MCMC repeats
   MC_Steps[i] <- MC_Steps[i] + 1
-  mh_acc <- mhUpdateVoigt(spc, Cal_I, Kappa_Hist[i], conc, wl, Sample, T_Sample, mhChol, lPriors)
-  prelim_accept_rate <- mh_acc / npart
-  C <- ifelse(prev_accept_rate == 0, 100, ceiling(log(c_c)/log(1-prelim_accept_rate))) 
-  print(paste("MCMC repeats is ", C))
+  
+  particles_vec <- 1:npart
+  step_space <- npart / length(possible_scaling_factors)
+  split_up <- lapply(seq(1,length(particles_vec), step_space),function(i) particles_vec[i:min(i+step_space-1,length(particles_vec))])
   Acc <- 0
-  Acc <- Acc + mh_acc
+  sf <- 1
+  for (split in split_up) {
+    scaling_factor_selected <- possible_scaling_factors[sf]
+    mhCov <- Prop_Info$cov * scaling_factor_selected
+    mhChol <- t(chol(mhCov, pivot = FALSE))
+    mh_acc <- mhUpdateVoigt(spc, Cal_I, Kappa_Hist[i], conc, wl, Sample[split,], T_Sample[split,], mhChol, lPriors)
+    Acc <- Acc + mh_acc
+    prelim_accept_rate <- mh_acc / step_space
+    C <- ifelse(prev_accept_rate == 0, 100, ceiling(log(c_c)/log(1-prelim_accept_rate))) 
+    suggested_repeats[sf] <- C
+    ratios[sf] <- C / scaling_factor_selected
+    sf <- sf + 1
+  }
+  print(suggested_repeats)
+  locMin <- which.min(ratios)
+  C <- suggested_repeats[locMin]
+  scaling_factor <- possible_scaling_factors[locMin]
+  mhCov <- Prop_Info$cov * scaling_factor
+  mhChol <- t(chol(mhCov, pivot = FALSE))
+  print(paste("MCMC repeats is ", C, "and scaling factor is ", scaling_factor))
   
   Temp_ESS <- 1/sum(Sample[,weight_mask]^2)
   ESS_AR[i] <- Temp_ESS
