@@ -293,7 +293,7 @@ double computeLogLikelihood(Eigen::VectorXd obsi, double lambda, double prErrNu,
 //' URL: \href{http://www.pphmj.com/abstract/1961.htm}{http://www.pphmj.com/abstract/1961.htm}
 // [[Rcpp::export]]
 long mhUpdateVoigt(Eigen::MatrixXd spectra, unsigned n, double kappa, Eigen::VectorXd conc, Eigen::VectorXd wavenum,
-                   NumericMatrix thetaMx, NumericMatrix logThetaMx, Eigen::MatrixXd mhChol, List priors)
+                   NumericMatrix thetaMx, NumericMatrix logThetaMx, Eigen::MatrixXd mhChol, List priors, int numberOfThreads)
 {
   // priors
   double prErrNu = priors["noise.nu"];
@@ -328,7 +328,10 @@ long mhUpdateVoigt(Eigen::MatrixXd spectra, unsigned n, double kappa, Eigen::Vec
   const NumericVector rUnif = runif(nPart, 0, 1);
 
   long accept = 0;
-#pragma omp parallel for default(shared) reduction(+:accept)
+  
+  //omp_set_num_threads(numberOfThreads);
+  
+  #pragma omp parallel for num_threads(numberOfThreads) reduction(+:accept)
   for (int pt = 0; pt < nPart; pt++)
   {
     VectorXd theta(nPK*4), logTheta(nPK*4), stdVec(nPK*4);

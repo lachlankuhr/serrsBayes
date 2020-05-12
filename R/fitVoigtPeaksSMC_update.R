@@ -21,7 +21,7 @@
 #'    scaL.sd=0.4, bl.smooth=5, bl.knots=20, loc.mu=peakLocations, loc.sd=c(5,5),
 #'    beta.mu=c(5000,5000), beta.sd=c(5000,5000), noise.sd=200, noise.nu=4)
 #' result <- fitVoigtPeaksSMC(wavenumbers, spectra, lPriors, npart=50, mcSteps=1)
-fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10000, rate=0.9, mcAR=0.23, mcSteps=10, minESS=npart/2, destDir=NA) {
+fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10000, rate=0.9, mcAR=0.23, mcSteps=10, minESS=npart/2, destDir=NA, number_of_threads) {
   #sourceCpp("/home/lachlan/Honours/serrsBayes/src/mixVoigt.cpp", verbose = FALSE, showOutput = FALSE)
   
   # Begin timing init
@@ -156,12 +156,12 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
   
   print(paste0("Took ", init_time_taken, " seconds to init."))
   
-  par(mfrow=c(2,6))
-  plot(density(Sample[,location_mask[1]]), main=paste0("Iteration: ", i))
+  #par(mfrow=c(2,6))
+  #plot(density(Sample[,location_mask[1]]), main=paste0("Iteration: ", i))
   repeat{
-    if (i %% 2 == 0) {
-      plot(density(Sample[,location_mask[1]]), main=paste0("Iteration: ", i)) 
-    }
+    #if (i %% 2 == 0) {
+    #  plot(density(Sample[,location_mask[1]]), main=paste0("Iteration: ", i)) 
+    #}
     
     i<-i+1
     
@@ -172,7 +172,7 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
     new_Kappa <- calculate_new_gamma(Kappa, Sample, log_likelihood_mask, npart, weight_mask)
     
     # Reweighting
-    reweight_res <- reweight_particles(Sample, weight_mask, log_likelihood_mask, new_Kappa, Kappa, log_evidence)
+    reweight_res <- reweight_particles(Sample, weight_mask, log_likelihood_mask, new_Kappa, Kappa, log_evidence, Cal_I)
     Temp_ESS <- reweight_res$Temp_ESS
     Sample <- reweight_res$Sample
     log_evidence <- reweight_res$log_evidence
@@ -191,7 +191,7 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
 
     # Move particles
     move_particles_res <- move_particles(Sample, T_Sample, N_Peaks, npart, weight_mask, MC_Steps, i, 
-                                         spc, Cal_I, Kappa_Hist, conc, wl, lPriors, ESS_AR, prev_accept_rate, c_c)
+                                         spc, Cal_I, Kappa_Hist, conc, wl, lPriors, ESS_AR, prev_accept_rate, c_c, number_of_threads)
     MC_Steps <- move_particles_res$MC_Steps
     ESS_AR <- move_particles_res$ESS_AR
     Temp_ESS <- move_particles_res$Temp_ESS
@@ -230,7 +230,7 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
 }
 
 move_particles <- function(Sample, T_Sample, N_Peaks, npart, weight_mask, MC_Steps, i, 
-                           spc, Cal_I, Kappa_Hist, conc, wl, lPriors, ESS_AR, prev_accept_rate, c_c) {
+                           spc, Cal_I, Kappa_Hist, conc, wl, lPriors, ESS_AR, prev_accept_rate, c_c, number_of_threads) {
   
   Prop_Info<-cov.wt(T_Sample[,1:(4*N_Peaks)],wt=Sample[,weight_mask])
   
@@ -249,7 +249,7 @@ move_particles <- function(Sample, T_Sample, N_Peaks, npart, weight_mask, MC_Ste
     scaling_factor_selected <- possible_scaling_factors[sf]
     mhCov <- Prop_Info$cov * scaling_factor_selected
     mhChol <- t(chol(mhCov, pivot = FALSE))
-    mh_acc <- mhUpdateVoigt(spc, Cal_I, Kappa_Hist[i], conc, wl, Sample[split,], T_Sample[split,], mhChol, lPriors)
+    mh_acc <- mhUpdateVoigt(spc, Cal_I, Kappa_Hist[i], conc, wl, Sample[split,], T_Sample[split,], mhChol, lPriors, number_of_threads)
     Acc <- Acc + mh_acc
     prelim_accept_rate <- mh_acc / step_space
     C <- ifelse(prev_accept_rate == 0, 100, ceiling(log(c_c)/log(1-prelim_accept_rate))) 
@@ -270,7 +270,7 @@ move_particles <- function(Sample, T_Sample, N_Peaks, npart, weight_mask, MC_Ste
   
   for(mcr in 2:C) {
     MC_Steps[i] <- MC_Steps[i] + 1
-    mh_acc <- mhUpdateVoigt(spc, Cal_I, Kappa_Hist[i], conc, wl, Sample, T_Sample, mhChol, lPriors)
+    mh_acc <- mhUpdateVoigt(spc, Cal_I, Kappa_Hist[i], conc, wl, Sample, T_Sample, mhChol, lPriors, number_of_threads)
     Acc <- Acc + mh_acc
     
     Temp_ESS <- 1/sum(Sample[,weight_mask]^2)
@@ -288,9 +288,10 @@ move_particles <- function(Sample, T_Sample, N_Peaks, npart, weight_mask, MC_Ste
 }
 
 # Reweight
-reweight_particles <- function(Sample, weight_mask, log_likelihood_mask, new_Kappa, Kappa, log_evidence) {
-  log_weights <- log(Sample[,weight_mask]) + (new_Kappa - Kappa) * 
-    Sample[,log_likelihood_mask]
+reweight_particles <- function(Sample, weight_mask, log_likelihood_mask, new_Kappa, Kappa, log_evidence, Cal_I) {
+  log_weights <- log(Sample[,weight_mask]*exp((new_Kappa-Kappa)*(Sample[,weight_mask+Cal_I]-max(Sample[,weight_mask+Cal_I]))))
+  #log_weights <- log(Sample[,weight_mask]) + (new_Kappa - Kappa) * 
+  #  Sample[,log_likelihood_mask]
   
   ## Log evidence
   log_evidence <- log_evidence + logSumExp(log_weights)
@@ -311,6 +312,7 @@ reweight_particles <- function(Sample, weight_mask, log_likelihood_mask, new_Kap
 # Resampling 
 resample_particles <- function(npart, Sample, T_Sample, weight_mask) {
   ptm <- proc.time()
+  
   ReSam<-sample(1:npart, size=npart, replace=T, prob=Sample[,weight_mask])
   Sample<-Sample[ReSam,]
   T_Sample<-T_Sample[ReSam,]
