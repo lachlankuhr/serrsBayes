@@ -331,3 +331,18 @@ mhUpdateVoigt <- function(spectra, n, kappa, conc, wavenum, thetaMx, logThetaMx,
     .Call('_serrsBayes_mhUpdateVoigt', PACKAGE = 'serrsBayes', spectra, n, kappa, conc, wavenum, thetaMx, logThetaMx, mhChol, priors)
 }
 
+#' Compute an ancestry vector for residual resampling of the SMC particles.
+#' 
+#' @param log_wt logarithms of the importance weights of each particle.
+#' @return Vector of indices to the particles that will be propagated forward to the next generation (i.e. the parents)
+#' @references
+#' Liu & Chen (1998) "Sequential Monte Carlo methods for dynamic systems," JASA 93(443): 1032-1044,
+#' DOI: \href{http://dx.doi.org/10.1080/01621459.1998.10473765}{10.1080/01621459.1998.10473765}
+#' 
+#' Douc, Cappe & Moulines (2005) "Comparison of resampling schemes for particle filtering"
+#' In Proc. 4th IEEE Int. Symp. ISPA, pp. 64-69,
+#' DOI: \href{http://dx.doi.org/10.1109/ISPA.2005.195385}{10.1109/ISPA.2005.195385}
+residualResampling <- function(log_wt) {
+    .Call('_serrsBayes_residualResampling', PACKAGE = 'serrsBayes', log_wt)
+}
+

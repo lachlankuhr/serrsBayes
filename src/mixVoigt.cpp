@@ -24,6 +24,7 @@
 #include <RcppEigen.h>
 using namespace Rcpp;
 using namespace Eigen;
+#include <sys/time.h>
 // [[Rcpp::plugins(openmp)]]
 
 Eigen::VectorXd dCauchy(Eigen::VectorXd Cal_V, double loc, double scale)
@@ -328,7 +329,7 @@ long mhUpdateVoigt(Eigen::MatrixXd spectra, unsigned n, double kappa, Eigen::Vec
   const NumericVector rUnif = runif(nPart, 0, 1);
 
   long accept = 0;
-#pragma omp parallel for default(shared) reduction(+:accept)
+  #pragma omp parallel for default(shared) reduction(+:accept)
   for (int pt = 0; pt < nPart; pt++)
   {
     VectorXd theta(nPK*4), logTheta(nPK*4), stdVec(nPK*4);
@@ -400,4 +401,153 @@ long mhUpdateVoigt(Eigen::MatrixXd spectra, unsigned n, double kappa, Eigen::Vec
     }
   }
   return accept;
+}
+
+//' Compute an ancestry vector for residual resampling of the SMC particles.
+//' 
+//' @param log_wt logarithms of the importance weights of each particle.
+//' @return Vector of indices to the particles that will be propagated forward to the next generation (i.e. the parents)
+//' @references
+//' Liu & Chen (1998) "Sequential Monte Carlo methods for dynamic systems," JASA 93(443): 1032-1044,
+//' DOI: \href{http://dx.doi.org/10.1080/01621459.1998.10473765}{10.1080/01621459.1998.10473765}
+//' 
+//' Douc, Cappe & Moulines (2005) "Comparison of resampling schemes for particle filtering"
+//' In Proc. 4th IEEE Int. Symp. ISPA, pp. 64-69,
+//' DOI: \href{http://dx.doi.org/10.1109/ISPA.2005.195385}{10.1109/ISPA.2005.195385}
+// [[Rcpp::export]]
+Eigen::ArrayXi residualResampling(NumericVector log_wt)
+{
+  const int n = log_wt.size();
+  ArrayXi idx(n);
+  Rcpp::Rcout << "n is " << n << "\n";
+  
+  // first loop is deterministic: only accept particles with n*weight > 1
+  int r=0;
+  for (int i=0; i<n; i++)
+  {
+    if (std::isfinite(log_wt(i)))
+    {
+      int tW = (int)trunc(exp(log_wt(i) + log((double)n)));
+      for (int j=0; j < tW; j++)
+      {
+        if ((r+j) < n) {
+          idx[r+j] = i;
+        }
+      }
+      r += tW;
+      log_wt(i) = log(exp(log_wt(i) + log((double)n)) - (double)tW);
+    }
+  }
+  Rcpp::Rcout << "r is " << r << "\n";
+  
+  // renormalize the weights
+  log_wt = log_wt - log(((double)n-r));
+  
+  // second loop uses multinomial resampling for the remaining n-r particles
+  const NumericVector randU = runif(n-r);
+  for (int i=r; i<n; i++)
+  {
+    // select a particle at random, according to the weights
+    double total = 0.0;
+    for (int j=0; j < n && total <= randU[i-r]; j++)
+    {
+      if (std::isfinite(log_wt(j)))
+      {
+        total += exp(log_wt(j));
+      }
+      idx[i] = j;
+    }
+  }
+  
+  // permute the index vector to ensure Condition 9 of Murray, Lee & Jacob (2015)
+  for (int i=0; i<n; i++)
+  {
+    if ((idx[i] != i) && (idx[idx[i]] != idx[i]))
+    {
+      int old = idx[i];
+      idx[i] = idx[idx[i]];
+      idx[idx[i]] = old;
+    }
+  }
+  return idx + 1;
+}
+
+// [[Rcpp::export]]
+Eigen::ArrayXi metropolisParallelResampling(NumericVector weights, 
+                                            NumericVector us, IntegerVector js)
+{
+  // The higher, the better (less bias)
+  const int B = 6000;
+  
+  // Initialise return result
+  const int sizeWeights = weights.size();
+  ArrayXi idx(sizeWeights);
+  
+  // Do the resampling
+  for (int i = 0; i < sizeWeights; i++) {
+    int k = i;
+    for (int n = 0; n < B; n++) {
+      int pos = i * B + n;
+      double u = us[pos];
+      int j = js[pos];
+      if (log(u) <= (log(weights[j]) - log(weights[k]))) {
+        k = j;
+      }
+    }
+    idx[i] = k;
+  }
+  
+  return idx;
+}
+
+// [[Rcpp::export]]
+Eigen::ArrayXi rejectionParallelResampling(NumericVector weights)
+{
+  // Initialise return result
+  const int sizeWeights = weights.size();
+  ArrayXi idx(sizeWeights);
+  
+  // Max weight
+  double maxWeight = max(weights);
+  
+  // Do the resampling
+  for (int i = 0; i < sizeWeights; i++) {
+    int j = i;
+    
+    double u = runif(1, 0, 1)[0];
+    while (u > (weights[j] / maxWeight)) {
+      j = sample(sizeWeights, 1)[0];
+      u = runif(1, 0, 1)[0];
+    }
+    idx[i] = j;
+  }
+  return idx;
+}
+
+// [[Rcpp::export]]
+Eigen::ArrayXi resampleParticlesNew(NumericVector weights, NumericMatrix Sample, 
+                    NumericVector us, IntegerVector js)
+{
+  //struct timeval t1,t2;
+  Rcpp::Rcout << "resampling idx" << "\n";
+  ArrayXi idx = metropolisParallelResampling(weights, us, js);
+  Rcpp::Rcout << "Finished resampling idx" << "\n";
+  
+  //#pragma omp parallel for
+  for (int p=0; p < idx.size(); p++)
+  {
+    //Rcpp::Rcout << "p is " << p << "\n";
+    // do nothing unless the particle has no offspring
+    if (idx[p] != p+1)
+    {
+      for (int j=0; j < Sample.rows(); j++)
+      {
+        if (!(j >= Sample.cols() || (idx[p]-1) >= Sample.rows() || (idx[p]-1) <= 0)) {
+          Sample(j,p) = Sample(j,idx[p]-1);
+        }
+        //T_Sample(j,p) = T_Sample(j,idx[p]-1);
+      }
+    }
+  }
+  return idx;
 }

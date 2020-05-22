@@ -1,7 +1,9 @@
 library(doMC)
 library(serrsBayes)
 library(matrixStats)
+library(Rcpp)
 source("/home/lachlan/Honours/serrsBayes/R/fitVoigtPeaksSMC_update.R")
+sourceCpp("/home/lachlan/Honours/serrsBayes/src/mixVoigt.cpp", verbose = FALSE, showOutput = FALSE)
 
 set.seed(1234)
 

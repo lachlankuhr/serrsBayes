@@ -22,7 +22,15 @@
 #'    beta.mu=c(5000,5000), beta.sd=c(5000,5000), noise.sd=200, noise.nu=4)
 #' result <- fitVoigtPeaksSMC(wavenumbers, spectra, lPriors, npart=50, mcSteps=1)
 fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10000, rate=0.9, mcAR=0.23, mcSteps=10, minESS=npart/2, destDir=NA) {
-  #sourceCpp("/home/lachlan/Honours/serrsBayes/src/mixVoigt.cpp", verbose = FALSE, showOutput = FALSE)
+  wl <- wavenumbers
+  spc <- spectra
+  lPriors <- lPriors2
+  npart <- 3000
+  rate=0.9
+  mcAR=0.23
+  mcSteps=10
+  minESS=npart/2
+  destDir=NA
   
   # Begin timing init
   init_start_time <- Sys.time()
@@ -183,11 +191,18 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
     
     print(paste0("Reweighting took ",(proc.time()-ptm)[3],"sec. for ESS ",Temp_ESS," with new kappa ",Kappa,"."))
     
+    # Residual resampling
+    idx <- rejectionParallelResampling(Sample[,weight_mask])
+    Sample <- Sample[idx, ]
+    T_Sample <- T_Sample[idx, ]
+    Sample[,weight_mask] <- rep(1/npart,npart)
+    T_Sample[,weight_mask] <- rep(1/npart,npart)
     
     # Simple multinomial resampling
-    resample_res <- resample_particles(npart, Sample, T_Sample, weight_mask)
-    Sample <- resample_res$Sample
-    T_Sample <- resample_res$T_Sample
+    #resample_res <- resample_particles(npart, Sample, T_Sample, weight_mask)
+    #Sample <- resample_res$Sample
+    #T_Sample <- resample_res$T_Sample
+    print(paste0("Resampled ", length(unique(idx)), "particles"))
 
     # Move particles
     move_particles_res <- move_particles(Sample, T_Sample, N_Peaks, npart, weight_mask, MC_Steps, i, 
@@ -306,6 +321,12 @@ reweight_particles <- function(Sample, weight_mask, log_likelihood_mask, new_Kap
   Temp_ESS <- 1/sum(Sample[,weight_mask]^2)
   
   return(list(log_evidence=log_evidence, Sample=Sample, Temp_ESS=Temp_ESS))
+}
+
+# Resampling in-place using residual resampling scheme
+resample_particles_inplace_residual <- function(weight_mask, Sample, npart) {
+  idx <- metropolisParallelResampling(Sample[,weight_mask], runif(npart * 3000), sample(1:npart, npart * 3000, replace = TRUE))
+  return(idx)
 }
 
 # Resampling 

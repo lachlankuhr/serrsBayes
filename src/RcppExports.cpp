@@ -243,6 +243,17 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// residualResampling
+Eigen::ArrayXi residualResampling(NumericVector log_wt);
+RcppExport SEXP _serrsBayes_residualResampling(SEXP log_wtSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericVector >::type log_wt(log_wtSEXP);
+    rcpp_result_gen = Rcpp::wrap(residualResampling(log_wt));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_serrsBayes_weightedLorentzian", (DL_FUNC) &_serrsBayes_weightedLorentzian, 4},
@@ -261,6 +272,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_serrsBayes_copyLogProposals", (DL_FUNC) &_serrsBayes_copyLogProposals, 2},
     {"_serrsBayes_computeLogLikelihood", (DL_FUNC) &_serrsBayes_computeLogLikelihood, 10},
     {"_serrsBayes_mhUpdateVoigt", (DL_FUNC) &_serrsBayes_mhUpdateVoigt, 9},
+    {"_serrsBayes_residualResampling", (DL_FUNC) &_serrsBayes_residualResampling, 1},
     {NULL, NULL, 0}
 };
 
