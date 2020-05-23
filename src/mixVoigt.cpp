@@ -404,3 +404,165 @@ long mhUpdateVoigt(Eigen::MatrixXd spectra, unsigned n, double kappa, Eigen::Vec
   }
   return accept;
 }
+
+// Swap elements in array
+void swapEles(int & a, int & b)
+{
+  int temp = a;
+  a = b;
+  b = temp;
+}
+
+//' Compute an ancestry vector for residual resampling of the SMC particles.
+//' 
+//' @param log_wt logarithms of the importance weights of each particle.
+//' @return Vector of indices to the particles that will be propagated forward to the next generation (i.e. the parents)
+//' @references
+//' Liu & Chen (1998) "Sequential Monte Carlo methods for dynamic systems," JASA 93(443): 1032-1044,
+//' DOI: \href{http://dx.doi.org/10.1080/01621459.1998.10473765}{10.1080/01621459.1998.10473765}
+//' 
+//' Douc, Cappe & Moulines (2005) "Comparison of resampling schemes for particle filtering"
+//' In Proc. 4th IEEE Int. Symp. ISPA, pp. 64-69,
+//' DOI: \href{http://dx.doi.org/10.1109/ISPA.2005.195385}{10.1109/ISPA.2005.195385}
+// [[Rcpp::export]]
+Eigen::ArrayXi residualResampling(NumericVector log_wt)
+{
+  const int n = log_wt.size();
+  ArrayXi idx(n);
+  Rcpp::Rcout << "n is " << n << "\n";
+  
+  // first loop is deterministic: only accept particles with n*weight > 1
+  int r=0;
+  for (int i=0; i<n; i++)
+  {
+    if (std::isfinite(log_wt(i)))
+    {
+      int tW = (int)trunc(exp(log_wt(i) + log((double)n)));
+      for (int j=0; j < tW; j++)
+      {
+        if ((r+j) < n) {
+          idx[r+j] = i;
+        }
+      }
+      r += tW;
+      log_wt(i) = log(exp(log_wt(i) + log((double)n)) - (double)tW);
+    }
+  }
+  Rcpp::Rcout << "r is " << r << "\n";
+  
+  // renormalize the weights
+  log_wt = log_wt - log(((double)n-r));
+  
+  // second loop uses multinomial resampling for the remaining n-r particles
+  const NumericVector randU = runif(n-r);
+  for (int i=r; i<n; i++)
+  {
+    // select a particle at random, according to the weights
+    double total = 0.0;
+    for (int j=0; j < n && total <= randU[i-r]; j++)
+    {
+      if (std::isfinite(log_wt(j)))
+      {
+        total += exp(log_wt(j));
+      }
+      idx[i] = j;
+    }
+  }
+  
+  // permute the index vector to ensure Condition 9 of Murray, Lee & Jacob (2015)
+  for (int i=0; i<n; i++)
+  {
+    if ((idx[i] != i) && (idx[idx[i]] != idx[i]))
+    {
+      int old = idx[i];
+      idx[i] = idx[idx[i]];
+      idx[idx[i]] = old;
+    }
+  }
+  return idx + 1;
+}
+
+// [[Rcpp::export]]
+Eigen::ArrayXi metropolisParallelResampling(NumericVector weights, NumericMatrix Sample, NumericMatrix T_Sample)
+{
+  // The higher, the better (less bias)
+  const int B = 6000;
+  
+  // Initialise return result
+  const int sizeWeights = weights.size();
+  ArrayXi idx(sizeWeights);
+  
+  // Do the resampling
+  for (int i = 0; i < sizeWeights; i++) {
+    int k = i;
+    for (int n = 0; n < B; n++) {
+      double u = runif(1, 0, 1)[0];
+      int j = sample(sizeWeights - 1, 1)[0];
+      if (log(u) <= (log(weights[j]) - log(weights[k]))) {
+        k = j;
+      }
+    }
+    idx[i] = k;
+  }
+  
+  //Rcpp::Rcout << "Max of idx is " << max(idx) << "\n";
+  
+  // permute the index vector to ensure Condition 9 of Murray, Lee & Jacob (2015)
+  for (int i = 0; i < sizeWeights; i++)
+  {
+    if ((idx[i] != i) && (idx[idx[i]] != idx[i]))
+    {
+      swapEles(idx[i], idx[idx[i]]);
+      i = i - 1;
+    }
+  }
+  
+  for (int p = 0; p < sizeWeights; p++)
+  {
+    // do nothing unless the particle has no offspring
+    if (idx[p] != p)
+    {
+      for (int j=0; j < Sample.cols(); j++)
+      {
+        Sample(p, j) = Sample(idx[p], j);
+        T_Sample(p, j) = T_Sample(idx[p], j);
+      }
+    }
+  }
+  return idx;
+}
+
+// [[Rcpp::export]]
+Eigen::ArrayXi rejectionParallelResampling(NumericVector weights)
+{
+  // Initialise return result
+  const int sizeWeights = weights.size();
+  ArrayXi idx(sizeWeights);
+  
+  // Max weight
+  double maxWeight = max(weights);
+  
+  // Do the resampling
+  for (int i = 0; i < sizeWeights; i++) {
+    int j = i;
+    
+    double u = runif(1, 0, 1)[0];
+    while (log(u) > (log(weights[j]) - log(maxWeight))) {
+      j = sample(sizeWeights, 1)[0];
+      u = runif(1, 0, 1)[0];
+    }
+    idx[i] = j;
+  }
+  
+  // permute the index vector to ensure Condition 9 of Murray, Lee & Jacob (2015)
+  for (int i = 0; i < sizeWeights; i++)
+  {
+    if ((idx[i] != i) && (idx[idx[i]] != idx[i]))
+    {
+      int old = idx[i];
+      idx[i] = idx[idx[i]];
+      idx[idx[i]] = old;
+    }
+  }
+  return idx;
+}

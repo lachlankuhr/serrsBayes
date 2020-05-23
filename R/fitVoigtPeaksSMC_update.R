@@ -21,7 +21,7 @@
 #'    scaL.sd=0.4, bl.smooth=5, bl.knots=20, loc.mu=peakLocations, loc.sd=c(5,5),
 #'    beta.mu=c(5000,5000), beta.sd=c(5000,5000), noise.sd=200, noise.nu=4)
 #' result <- fitVoigtPeaksSMC(wavenumbers, spectra, lPriors, npart=50, mcSteps=1)
-fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10000, rate=0.9, mcAR=0.23, mcSteps=10, minESS=npart/2, destDir=NA, number_of_threads) {
+fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10000, rate=0.9, mcAR=0.23, mcSteps=10, minESS=npart/2, destDir=NA, number_of_threads = 4) {
   #sourceCpp("/home/lachlan/Honours/serrsBayes/src/mixVoigt.cpp", verbose = FALSE, showOutput = FALSE)
   
   # Begin timing init
@@ -156,12 +156,12 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
   
   print(paste0("Took ", init_time_taken, " seconds to init."))
   
-  #par(mfrow=c(2,6))
-  #plot(density(Sample[,location_mask[1]]), main=paste0("Iteration: ", i))
+  par(mfrow=c(2,6))
+  plot(density(Sample[,location_mask[1]]), main=paste0("Iteration: ", i))
   repeat{
-    #if (i %% 2 == 0) {
-    #  plot(density(Sample[,location_mask[1]]), main=paste0("Iteration: ", i)) 
-    #}
+    if (i %% 2 == 0) {
+      plot(density(Sample[,location_mask[1]]), main=paste0("Iteration: ", i)) 
+    }
     
     i<-i+1
     
@@ -184,10 +184,26 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
     print(paste0("Reweighting took ",(proc.time()-ptm)[3],"sec. for ESS ",Temp_ESS," with new kappa ",Kappa,"."))
     
     
-    # Simple multinomial resampling
-    resample_res <- resample_particles(npart, Sample, T_Sample, weight_mask)
-    Sample <- resample_res$Sample
-    T_Sample <- resample_res$T_Sample
+    # Parallel resampling
+    ptm <- proc.time()
+    
+    #if (i > 10) {
+    #  # Simple multinomial resampling
+    #  resample_res <- resample_particles(npart, Sample, T_Sample, weight_mask)
+    #  Sample <- resample_res$Sample
+    #  T_Sample <- resample_res$T_Sample
+    #} else {
+      # Parallel resampling
+      idx <- metropolisParallelResampling(Sample[,weight_mask], Sample, T_Sample)  
+      
+      #Sample <- Sample[idx,]
+      #T_Sample <- T_Sample[idx,]
+      
+      print(paste("*** Resampling with",length(unique(T_Sample[,1])),"unique indices took",(proc.time()-ptm)[3],"sec ***"))
+    #}
+    
+    Sample[,weight_mask] <- rep(1,npart)/npart
+    T_Sample[,weight_mask] <- rep(1,npart)/npart
 
     # Move particles
     move_particles_res <- move_particles(Sample, T_Sample, N_Peaks, npart, weight_mask, MC_Steps, i, 
@@ -232,7 +248,8 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
 move_particles <- function(Sample, T_Sample, N_Peaks, npart, weight_mask, MC_Steps, i, 
                            spc, Cal_I, Kappa_Hist, conc, wl, lPriors, ESS_AR, prev_accept_rate, c_c, number_of_threads) {
   
-  Prop_Info<-cov.wt(T_Sample[,1:(4*N_Peaks)],wt=Sample[,weight_mask])
+  Prop_Info <- cov.wt(T_Sample[,1:(4*N_Peaks)], wt=Sample[,weight_mask])
+  
   
   possible_scaling_factors <- c(0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.25)
   suggested_repeats <- rep(0, length(possible_scaling_factors))
@@ -260,6 +277,9 @@ move_particles <- function(Sample, T_Sample, N_Peaks, npart, weight_mask, MC_Ste
   print(suggested_repeats)
   locMin <- which.min(ratios)
   C <- suggested_repeats[locMin]
+  if (C < 1) {
+    C <- 10
+  }
   scaling_factor <- possible_scaling_factors[locMin]
   mhCov <- Prop_Info$cov * scaling_factor
   mhChol <- t(chol(mhCov, pivot = FALSE))
