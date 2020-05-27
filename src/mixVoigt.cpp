@@ -425,8 +425,11 @@ void swapEles(int & a, int & b)
 //' In Proc. 4th IEEE Int. Symp. ISPA, pp. 64-69,
 //' DOI: \href{http://dx.doi.org/10.1109/ISPA.2005.195385}{10.1109/ISPA.2005.195385}
 // [[Rcpp::export]]
-Eigen::ArrayXi residualResampling(NumericVector log_wt)
+Eigen::ArrayXi residualResampling(NumericVector log_wt, NumericMatrix Sample, NumericMatrix T_Sample)
 {
+  // Transform to log
+  log_wt = log(log_wt);
+  
   const int n = log_wt.size();
   ArrayXi idx(n);
   Rcpp::Rcout << "n is " << n << "\n";
@@ -470,16 +473,28 @@ Eigen::ArrayXi residualResampling(NumericVector log_wt)
   }
   
   // permute the index vector to ensure Condition 9 of Murray, Lee & Jacob (2015)
-  for (int i=0; i<n; i++)
+  for (int i = 0; i < n; i++)
   {
     if ((idx[i] != i) && (idx[idx[i]] != idx[i]))
     {
-      int old = idx[i];
-      idx[i] = idx[idx[i]];
-      idx[idx[i]] = old;
+      swapEles(idx[i], idx[idx[i]]);
+      i = i - 1;
     }
   }
-  return idx + 1;
+  
+  for (int p = 0; p < n; p++)
+  {
+    // do nothing unless the particle has no offspring
+    if (idx[p] != p)
+    {
+      for (int j=0; j < Sample.cols(); j++)
+      {
+        Sample(p, j) = Sample(idx[p], j);
+        T_Sample(p, j) = T_Sample(idx[p], j);
+      }
+    }
+  }
+  return idx;
 }
 
 // [[Rcpp::export]]
@@ -533,7 +548,7 @@ Eigen::ArrayXi metropolisParallelResampling(NumericVector weights, NumericMatrix
 }
 
 // [[Rcpp::export]]
-Eigen::ArrayXi rejectionParallelResampling(NumericVector weights)
+Eigen::ArrayXi rejectionParallelResampling(NumericVector weights, NumericMatrix Sample, NumericMatrix T_Sample)
 {
   // Initialise return result
   const int sizeWeights = weights.size();
@@ -548,7 +563,7 @@ Eigen::ArrayXi rejectionParallelResampling(NumericVector weights)
     
     double u = runif(1, 0, 1)[0];
     while (log(u) > (log(weights[j]) - log(maxWeight))) {
-      j = sample(sizeWeights, 1)[0];
+      j = sample(sizeWeights - 1, 1)[0];
       u = runif(1, 0, 1)[0];
     }
     idx[i] = j;
@@ -559,9 +574,21 @@ Eigen::ArrayXi rejectionParallelResampling(NumericVector weights)
   {
     if ((idx[i] != i) && (idx[idx[i]] != idx[i]))
     {
-      int old = idx[i];
-      idx[i] = idx[idx[i]];
-      idx[idx[i]] = old;
+      swapEles(idx[i], idx[idx[i]]);
+      i = i - 1;
+    }
+  }
+  
+  for (int p = 0; p < sizeWeights; p++)
+  {
+    // do nothing unless the particle has no offspring
+    if (idx[p] != p)
+    {
+      for (int j=0; j < Sample.cols(); j++)
+      {
+        Sample(p, j) = Sample(idx[p], j);
+        T_Sample(p, j) = T_Sample(idx[p], j);
+      }
     }
   }
   return idx;

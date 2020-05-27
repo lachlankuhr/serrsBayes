@@ -194,7 +194,7 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
     #  T_Sample <- resample_res$T_Sample
     #} else {
       # Parallel resampling
-      idx <- metropolisParallelResampling(Sample[,weight_mask], Sample, T_Sample)  
+      idx <- rejectionParallelResampling(Sample[,weight_mask], Sample, T_Sample)  
       
       #Sample <- Sample[idx,]
       #T_Sample <- T_Sample[idx,]

@@ -259,7 +259,7 @@ Eigen::ArrayXi resampleParticles(NumericVector log_weights, NumericMatrix ampMx,
   struct timeval t1,t2;
   ArrayXi idx = residualResampling(log_weights);
 
-#pragma omp parallel for
+  #pragma omp parallel for
   for (int p=0; p < idx.size(); p++)
   {
     // do nothing unless the particle has no offspring
