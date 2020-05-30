@@ -66,3 +66,17 @@ for (pt in 1:length(samp.idx)) {
 par(mfrow=c(1,2))
 plot(result2$accept, main="Acceptance Rate", ylab="Acceptance Rate")
 plot(result2$mhSteps, main="MCMC Steps", ylab="Number of MCMC Steps")
+
+par(mfrow=c(4,4))
+for (i in 1:ncol(result2$scale_G)) {
+  plot(density(result2$scale_G[,i]), main=paste0("Scale G", i))
+}
+for (i in 1:ncol(result2$scale_L)) {
+  plot(density(result2$scale_L[,i]), main=paste0("Scale L", i))
+}
+for (i in 1:ncol(result2$location)) {
+  plot(density(result2$location[,i]), main=paste0("Location ", i))
+}
+for (i in 1:ncol(result2$beta)) {
+  plot(density(result2$beta[,i]), main=paste0("Beta ", i))
+}
