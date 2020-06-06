@@ -22,6 +22,10 @@
 // #  -------------------------------------------------------------------------
 // [[Rcpp::depends(RcppEigen)]]
 #include <RcppEigen.h>
+// [[Rcpp::depends(dqrng, BH, sitmo)]]
+#include <xoshiro.h>
+#include <dqrng_distribution.h>
+// [[Rcpp::plugins(cpp11)]]
 using namespace Rcpp;
 using namespace Eigen;
 // [[Rcpp::plugins(openmp)]]
@@ -500,24 +504,37 @@ Eigen::ArrayXi residualResampling(NumericVector log_wt, NumericMatrix Sample, Nu
 // [[Rcpp::export]]
 Eigen::ArrayXi metropolisParallelResampling(NumericVector weights, NumericMatrix Sample, NumericMatrix T_Sample)
 {
-  // The higher, the better (less bias)
-  const int B = 6000;
-  
   // Initialise return result
   const int sizeWeights = weights.size();
+  
+  // Parallel RNG
+  dqrng::uniform_distribution unifDist(0.0, 1.0);
+  std::uniform_int_distribution<int> sampleInt(0, sizeWeights - 1);
+  dqrng::xoshiro256plus rng(42);
+  
+  // The higher, the better (less bias)
+  const int B = 6000;
   ArrayXi idx(sizeWeights);
   
   // Do the resampling
-  for (int i = 0; i < sizeWeights; i++) {
-    int k = i;
-    for (int n = 0; n < B; n++) {
-      double u = runif(1, 0, 1)[0];
-      int j = sample(sizeWeights - 1, 1)[0];
-      if (log(u) <= (log(weights[j]) - log(weights[k]))) {
-        k = j;
+  #pragma omp parallel num_threads(4)
+  {
+    dqrng::xoshiro256plus lrng(rng); // Make thread local copy of rng 
+    lrng.long_jump(omp_get_thread_num() + 1); // Advance rng
+    
+    // Do the resampling
+    #pragma omp for
+    for (int i = 0; i < sizeWeights; i++) {
+      int k = i;
+      for (int n = 0; n < B; n++) {
+        double u = unifDist(lrng);
+        int j = sampleInt(lrng);
+        if (u < (weights[j] / weights[k])) {
+          k = j;
+        }
       }
+      idx[i] = k;
     }
-    idx[i] = k;
   }
   
   //Rcpp::Rcout << "Max of idx is " << max(idx) << "\n";

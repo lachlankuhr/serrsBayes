@@ -156,12 +156,12 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
   
   print(paste0("Took ", init_time_taken, " seconds to init."))
   
-  par(mfrow=c(2,6))
-  plot(density(Sample[,location_mask[1]]), main=paste0("Iteration: ", i))
+  #par(mfrow=c(2,6))
+  #plot(density(Sample[,location_mask[1]]), main=paste0("Iteration: ", i))
   repeat{
-    if (i %% 2 == 0) {
-      plot(density(Sample[,location_mask[1]]), main=paste0("Iteration: ", i)) 
-    }
+    #if (i %% 2 == 0) {
+    #  plot(density(Sample[,location_mask[1]]), main=paste0("Iteration: ", i)) 
+    #}
     
     i<-i+1
     
@@ -194,7 +194,7 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
     #  T_Sample <- resample_res$T_Sample
     #} else {
       # Parallel resampling
-      idx <- rejectionParallelResampling(Sample[,weight_mask], Sample, T_Sample)  
+      idx <- metropolisParallelResampling(Sample[,weight_mask], Sample, T_Sample)  
       
       #Sample <- Sample[idx,]
       #T_Sample <- T_Sample[idx,]

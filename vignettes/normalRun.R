@@ -31,7 +31,7 @@ text(peakLocations + c(100,20,40,0), spectra[1,pkIdx] + c(0,700,400,700), labels
 lPriors2 <- list(loc.mu=peakLocations, loc.sd=rep(50,nPK), scaG.mu=log(16.47) - (0.34^2)/2,
                  scaG.sd=0.34, scaL.mu=log(25.27) - (0.4^2)/2, scaL.sd=0.4, noise.nu=5,
                  noise.sd=50, bl.smooth=1, bl.knots=50)
-tm2 <- system.time(result2 <- fitVoigtPeaksSMC_update(wavenumbers, spectra, lPriors2, npart=3000))
+tm2 <- system.time(result2 <- fitVoigtPeaksSMC_update(wavenumbers, spectra, lPriors2, npart=4000))
 result2$time <- tm2
 
 log_evid_rec <- c(log_evid_rec, result2$log_evid)
