@@ -24,6 +24,8 @@ long mhUpdateVoigt(Eigen::VectorXd spectra, unsigned n, double kappa, Eigen::Vec
 // Helper functions
 ArrayXd toScalarArray(double scalar, int n);
 void swapEles(int & a, int & b);
+const static IOFormat CSVFormat(StreamPrecision, DontAlignCols, ", ", "\n");
+void writeToCSVfile(string name, MatrixXd matrix);
 
 // Defines
 #define PI 3.1415
@@ -110,8 +112,16 @@ int main() {
         // Update Kappa
         kappa = newKappa;
 
-    } while (kappa <= 1);
+    } while (kappa < 1);
+
+    // Write the results to disk
+    writeToCSVfile("sample.csv", sample);
 }
+
+void writeToCSVfile(string name, MatrixXd matrix) {
+    ofstream file(name.c_str());
+    file << matrix.format(CSVFormat);
+ }
 
 void moveParticles(VectorXd weights, Eigen::Ref<Eigen::MatrixXd> sample, Eigen::Ref<Eigen::MatrixXd> tSample, int nPeaks, double kappa) {
   MatrixXd covMat = tSample(all, seq(0, 4*nPeaks - 1));
