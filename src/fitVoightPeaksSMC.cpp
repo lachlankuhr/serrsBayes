@@ -4,7 +4,8 @@
 #include <iostream>
 #include <vector>
 #include <fstream>
-#include <math.h> 
+#include <math.h>
+#include <random>
 
 using namespace std;
 using namespace Eigen;
@@ -13,9 +14,11 @@ double calculateNewKappa(double kappa, ArrayXd weights, ArrayXd logLike, int nPa
 double calcESS(double newGamma, double oldGamma, ArrayXd weights, ArrayXd logLike);
 double bisection(double a, double b, function<double (double updateKappa)> func);
 double reweightParticles(double newKappa, double kappa, Eigen::Ref<Eigen::ArrayXd> weights, ArrayXd logLike, int nPart);
+ArrayXi metropolisResampling(ArrayXd weights, Eigen::Ref<Eigen::MatrixXd> sample, Eigen::Ref<Eigen::MatrixXd> tSample);
 
 // Helper functions
 ArrayXd toScalarArray(double scalar, int n);
+void swapEles(int & a, int & b);
 
 template<typename M>
 M loadCsvMatrix(const std::string & path) {
@@ -56,7 +59,9 @@ int main() {
     double kappa = 0;
     double newKappa;
 
+    // Load in matrices
     MatrixXd sample = loadCsvMatrix<MatrixXd>("/home/lachlan/Honours/serrsBayes/src/data/sample.csv");
+    MatrixXd tSample = loadCsvMatrix<MatrixXd>("/home/lachlan/Honours/serrsBayes/src/data/tSample.csv");
 
     do {
         // Increment iteration count
@@ -69,9 +74,73 @@ int main() {
         // Reweight particles
         double tempESS = reweightParticles(newKappa, kappa, sample(all, weightMask), sample(all, logLikelihoodMask), nPart);
         cout << "Temp ESS: " << tempESS << endl;
+
+        // Resampling
+        ArrayXi idx = metropolisResampling(sample(all, weightMask), sample, tSample);
+        cout << idx << endl;
         while(true);
 
     } while (true);
+}
+
+ArrayXi metropolisResampling(ArrayXd weights, Eigen::Ref<Eigen::MatrixXd> sample, Eigen::Ref<Eigen::MatrixXd> tSample) {
+  // Initialise return result
+  const int sizeWeights = weights.size();
+  
+  // The higher, the better (less bias)
+  const int B = 6000;
+  ArrayXi idx(sizeWeights);
+  
+  // Rng
+  std::default_random_engine generator;
+  std::uniform_int_distribution<int> sampleRandomInt(0, sizeWeights - 1);
+  std::uniform_real_distribution<double> sampleUniform(0.0, 1.0);
+  
+  for (int i = 0; i < sizeWeights; i++) {
+    int k = i;
+    for (int n = 0; n < B; n++) {
+      double u = sampleUniform(generator);
+      int j = sampleRandomInt(generator);
+      if (u < (weights[j] / weights[k])) {
+        k = j;
+      }
+    }
+    idx[i] = k;
+  }
+  
+  
+  //Rcpp::Rcout << "Max of idx is " << max(idx) << "\n";
+  
+  // permute the index vector to ensure Condition 9 of Murray, Lee & Jacob (2015)
+  for (int i = 0; i < sizeWeights; i++)
+  {
+    if ((idx[i] != i) && (idx[idx[i]] != idx[i]))
+    {
+      swapEles(idx[i], idx[idx[i]]);
+      i = i - 1;
+    }
+  }
+  
+  for (int p = 0; p < sizeWeights; p++)
+  {
+    // do nothing unless the particle has no offspring
+    if (idx[p] != p)
+    {
+      for (int j=0; j < sample.cols(); j++)
+      {
+        sample(p, j) = sample(idx[p], j);
+        tSample(p, j) = tSample(idx[p], j);
+      }
+    }
+  }
+  return idx;
+}
+
+// Swap elements in array
+void swapEles(int & a, int & b) {
+  int temp = a;
+  a = b;
+  b = temp;
 }
 
 double reweightParticles(double newKappa, double kappa, Eigen::Ref<Eigen::ArrayXd> weights, ArrayXd logLike, int nPart) {
