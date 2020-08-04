@@ -1,0 +1,17 @@
+{
+    "files.associations": {
+        "iostream": "cpp",
+        "dense": "cpp",
+        "iosfwd": "cpp",
+        "algorithm": "cpp",
+        "*.tcc": "cpp",
+        "functional": "cpp",
+        "random": "cpp",
+        "ostream": "cpp",
+        "cmath": "cpp",
+        "complex": "cpp",
+        "cstdlib": "cpp",
+        "chrono": "cpp",
+        "core": "cpp"
+    }
+}

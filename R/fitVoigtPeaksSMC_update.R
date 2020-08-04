@@ -22,7 +22,18 @@
 #'    beta.mu=c(5000,5000), beta.sd=c(5000,5000), noise.sd=200, noise.nu=4)
 #' result <- fitVoigtPeaksSMC(wavenumbers, spectra, lPriors, npart=50, mcSteps=1)
 fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), npart=10000, rate=0.9, mcAR=0.23, mcSteps=10, minESS=npart/2, destDir=NA, number_of_threads = 4) {
-  #sourceCpp("/home/lachlan/Honours/serrsBayes/src/mixVoigt.cpp", verbose = FALSE, showOutput = FALSE)
+  sourceCpp("/home/lachlan/Honours/serrsBayes/src/mixVoigt.cpp", verbose = FALSE, showOutput = FALSE)
+  wl = wavenumbers
+  spc = spectra
+  lPriors = lPriors2
+  conc=rep(1.0,nrow(spc))
+  npart=4000
+  rate=0.9
+  mcAR=0.23
+  mcSteps=10
+  minESS=npart/2
+  destDir=NA
+  number_of_threads = 4
   
   # Begin timing init
   init_start_time <- Sys.time()
@@ -136,7 +147,6 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
   Kappa_Hist[1]<-0
   Time_Hist[1]<-iTime[3]
   print(paste("Step 1: initialization for",N_Peaks,"Voigt peaks took",iTime[3],"sec."))
-  print(colMeans(Sample[,beta_mask]))
   
   i<-1
   Cal_I <- 1
@@ -223,7 +233,6 @@ fitVoigtPeaksSMC_update <- function(wl, spc, lPriors, conc=rep(1.0,nrow(spc)), n
       print(paste("Interim results saved to",iFile))
     }
     
-    print(colMeans(Sample[,beta_mask]))
     print(paste0("Iteration ",i,": MCMC loops (acceptance rate ",MC_AR[i],")"))
     if (Kappa >= 1 || MC_AR[i] < 1/npart) {
       break
@@ -370,7 +379,7 @@ calculate_new_gamma <- function(Kappa, Sample, log_likelihood_mask, npart, weigh
 calc_ESS <- function(new_gamma, old_gamma, weights, log_like) {
   # By notes
   log_weights <- log(weights) + (new_gamma - old_gamma) * 
-    log_like
+    log_like 
   
   # Numerically stabilise before exponentiating
   log_weights <- log_weights - max(log_weights)
