@@ -18,8 +18,9 @@ double bisection(double a, double b, function<double (double updateKappa)> func)
 double reweightParticles(double newKappa, double kappa, Eigen::Ref<Eigen::ArrayXd> weights, ArrayXd logLike, int nPart);
 ArrayXi metropolisResampling(ArrayXd weights, Eigen::Ref<Eigen::MatrixXd> sample, Eigen::Ref<Eigen::MatrixXd> tSample, int weightMask);
 void moveParticles(VectorXd weights, Eigen::Ref<Eigen::MatrixXd> sample, Eigen::Ref<Eigen::MatrixXd> tSample, int nPeaks, double kappa);
-long mhUpdateVoigt(Eigen::VectorXd spectra, unsigned n, double kappa, Eigen::VectorXd conc, Eigen::VectorXd wavenum,
-                   Eigen::Ref<Eigen::MatrixXd> thetaMx, Eigen::Ref<Eigen::MatrixXd> logThetaMx, Eigen::MatrixXd mhChol);
+long mhUpdateVoigt(Eigen::Ref<Eigen::VectorXd> spectra, unsigned n, double kappa, Eigen::VectorXd conc, Eigen::Ref<Eigen::VectorXd> wavenum,
+                   Eigen::Ref<Eigen::MatrixXd> thetaMx, Eigen::Ref<Eigen::MatrixXd> logThetaMx, Eigen::Ref<Eigen::MatrixXd> mhChol);
+                   
 
 // Helper functions
 ArrayXd toScalarArray(double scalar, int n);
@@ -76,6 +77,14 @@ VectorXd eigVal = loadCsvMatrix<MatrixXd>("/home/lachlan/Honours/serrsBayes/src/
 // Spectra
 VectorXd spectra = loadCsvMatrix<MatrixXd>("/home/lachlan/Honours/serrsBayes/src/data/spectra.csv").row(0);
 VectorXd wl = loadCsvMatrix<MatrixXd>("/home/lachlan/Honours/serrsBayes/src/data/wl.csv").col(0);
+
+// Save some time
+MatrixXd g0_Cal = precMx * wl.size() * 1;
+MatrixXd g0LU(g0_Cal);
+MatrixXd gi_Cal = xTx + g0_Cal;
+MatrixXd giLU(gi_Cal);
+double g0_Det = log(abs(g0LU.determinant()));
+double gi_Det = log(abs(giLU.determinant()));
 
 int main() { 
     // Playground
@@ -155,9 +164,7 @@ double computeLogLikelihood(Eigen::VectorXd obsi, double lambda, double prErrNu,
   MatrixXd g0_Cal = precMx * nWL * lambda;
   MatrixXd g0LU(g0_Cal);
   MatrixXd gi_Cal = xTx + g0_Cal;
-  MatrixXd giLU(gi_Cal);
-  double g0_Det = log(abs(g0LU.determinant()));
-  double gi_Det = log(abs(giLU.determinant()));
+
 //  Rcpp::Rcout << g0_Det << "; " << gi_Det << "; ";
   VectorXd b = aMx.transpose() * obsi;
   if (!b.allFinite()) b = aMx.transpose() * obsi.transpose(); // row vector
@@ -263,10 +270,19 @@ Eigen::VectorXd copyLogProposals(int nPK, Eigen::VectorXd T_Prop_Theta)
   return Prop_Theta;
 }
 
-long mhUpdateVoigt(Eigen::VectorXd spectra, unsigned n, double kappa, Eigen::VectorXd conc, Eigen::VectorXd wavenum,
-                   Eigen::Ref<Eigen::MatrixXd> thetaMx, Eigen::Ref<Eigen::MatrixXd> logThetaMx, Eigen::MatrixXd mhChol)
+void generateMoveRandomVariables(Eigen::Ref<ArrayXd> rUnif, Eigen::Ref<ArrayXd> stdNorm, int nPK, int nPart) {
+  std::default_random_engine generator;
+  std::uniform_real_distribution<double> sampleUniform(0.0, 1.0);
+  std::normal_distribution<double> sampleStandardNormal{0,1};
+
+  for (int i = 0; i < nPart; i++) rUnif(i) = sampleUniform(generator);
+  for (int i = 0; i < (nPK * nPart * 4); i++) stdNorm(i) = sampleStandardNormal(generator);
+}
+
+long mhUpdateVoigt(Eigen::Ref<Eigen::VectorXd> spectra, unsigned n, double kappa, Eigen::VectorXd conc, Eigen::Ref<Eigen::VectorXd> wavenum,
+                   Eigen::Ref<Eigen::MatrixXd> thetaMx, Eigen::Ref<Eigen::MatrixXd> logThetaMx, Eigen::Ref<Eigen::MatrixXd> mhChol)
 {
-  // priors
+  // priors - NEED TO UPDATE THESE IF THE DATA CHANGES
   double prErrNu = 5;
   double prErrSS = 12500;
   double prScaGmu = 2.743741; // squared exponential (Gaussian) peaks
@@ -283,15 +299,9 @@ long mhUpdateVoigt(Eigen::VectorXd spectra, unsigned n, double kappa, Eigen::Vec
   int nWL = wavenum.size();
 
   // RNG is not thread-safe
-  std::default_random_engine generator;
-  std::uniform_real_distribution<double> sampleUniform(0.0, 1.0);
-  std::normal_distribution<double> sampleStandardNormal{0,1};
-
-  VectorXd rUnif(nPart);
-  for (int i = 0; i < nPart; i++) rUnif(i) = sampleUniform(generator);
-  VectorXd stdNorm(nPK * nPart * 4);
-  for (int i = 0; i < (nPK * nPart * 4); i++) stdNorm(i) = sampleStandardNormal(generator);
-  
+  ArrayXd rUnif(nPart);
+  ArrayXd stdNorm(nPK * nPart * 4);
+  generateMoveRandomVariables(rUnif, stdNorm, nPK, nPart);
 
   long accept = 0;
   
