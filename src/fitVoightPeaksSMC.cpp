@@ -132,6 +132,12 @@ void writeToCSVfile(string name, MatrixXd matrix) {
     file << matrix.format(CSVFormat);
  }
 
+MatrixXd weightedCovarianceMatrix(VectorXd weights, Eigen::MatrixXd matrix) {
+  MatrixXd centered = matrix.rowwise() - weights.transpose() * matrix;
+  MatrixXd covWt = (centered.adjoint() * centered) / double(matrix.rows() - 1);
+  return(covWt);
+}
+
 void moveParticles(VectorXd weights, Eigen::Ref<Eigen::MatrixXd> sample, Eigen::Ref<Eigen::MatrixXd> tSample, int nPeaks, double kappa) {
   MatrixXd covMat = tSample(all, seq(0, 4*nPeaks - 1));
   MatrixXd centered = covMat.rowwise() - weights.transpose() * covMat;
