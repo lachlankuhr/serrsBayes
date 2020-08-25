@@ -1,7 +1,13 @@
 # Makefile for C++ implementation of fitVoightPeaksSMC
-all:
+all: program
+	
+
+program: gpu.o:
 	mkdir -p build
-	g++ -I /usr/local/include/eigen3/ fitVoightPeaksSMC.cpp -fopenmp -o build/fitVoightPeaksSMC -g
+	nvcc -o build/program -I /usr/local/include/eigen3/ fitVoightPeaksSMC.cpp moveGPU.cu
+
+gpu.o:
+	nvcc -c moveGPU.cu
 
 run: all
 	./build/fitVoightPeaksSMC
