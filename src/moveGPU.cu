@@ -149,12 +149,20 @@ Eigen::VectorXd copyLogProposals(int nPK, Eigen::VectorXd T_Prop_Theta)
 }
 
 __global__
-void mhUpdateVoigt(Eigen::Ref<Eigen::VectorXd> spectra, unsigned n, double kappa, Eigen::VectorXd conc, Eigen::Ref<Eigen::VectorXd> wavenum,
-                   Eigen::Ref<Eigen::MatrixXd> thetaMx, Eigen::Ref<Eigen::MatrixXd> logThetaMx, Eigen::Ref<Eigen::MatrixXd> mhChol,
-                double g0_Det, double gi_Det,
-                MatrixXd basisMx, MatrixXd precMx, VectorXd eigVal, MatrixXd xTx, MatrixXd aMx, MatrixXd ruMx,
-                ArrayXd rUnif, ArrayXd stdNorm)
-{ 
+void mhUpdateVoigt(double * d_spectra, unsigned n, double kappa, Eigen::VectorXd conc, double * d_wavenum, double * d_thetaMx, double * d_logThetaMx, double * d_mhChol, double g0_Det, double gi_Det, double * d_basisMx, double * d_precMx, double * d_eigVal, double * d_xTx, double * d_aMx, double * d_ruMx, ArrayXd rUnif, ArrayXd stdNorm)
+{
+  Map<VectorXd> spectra(d_spectra, 331);
+  Map<MatrixXd> thetaMx(d_thetaMx, 20, 20);
+  Map<MatrixXd> logThetaMx(d_logThetaMx, 20, 20);
+  Map<VectorXd> wavenum(d_wavenum, 331);
+  Map<MatrixXd> basisMx(d_basisMx, 331, 54);
+  Map<MatrixXd> precMx(d_precMx, 54, 54);
+  Map<MatrixXd> xTx(d_xTx, 54, 54);
+  Map<MatrixXd> aMx(d_aMx, 331, 54);
+  Map<MatrixXd> ruMx(d_ruMx, 54, 54);
+  Map<MatrixXd> mhChol(d_mhChol, 16, 16);
+  Map<VectorXd> eigVal(d_eigVal, 54);
+
   VectorXd prLocMu(4);
   prLocMu << 1033, 1106, 1149, 1448;
   VectorXd prLocSD(4);
@@ -230,12 +238,12 @@ void mhUpdateVoigt(Eigen::Ref<Eigen::VectorXd> spectra, unsigned n, double kappa
 }
 
 __host__
-void jiggleParticles(Eigen::Ref<Eigen::VectorXd> spectra, unsigned n, double kappa, Eigen::VectorXd conc, Eigen::Ref<Eigen::VectorXd> wavenum,
-                Eigen::Ref<Eigen::MatrixXd> thetaMx, Eigen::Ref<Eigen::MatrixXd> logThetaMx, Eigen::Ref<Eigen::MatrixXd> mhChol,
-            double g0_Det, double gi_Det, MatrixXd basisMx, MatrixXd precMx, VectorXd eigVal, MatrixXd xTx, MatrixXd aMx, MatrixXd ruMx,
-            ArrayXd rUnif, ArrayXd stdNorm, VectorXd wl, MatrixXd sample, MatrixXd tSample, int grid_size, int block_size) {
+void jiggleParticles(double * d_spectra, unsigned n, double kappa, Eigen::VectorXd conc, double * d_wavenum, double * d_mhChol, double g0_Det, double gi_Det, double * d_basisMx, double * d_precMx, double * d_eigVal, double * d_xTx, double * d_aMx, double * d_ruMx, ArrayXd rUnif, ArrayXd stdNorm, double * d_sample, double * d_tSample, int grid_size, int block_size) {
+    cout << "Jiggle." << std::flush;
+
     for (int mcr = 0; mcr < 5; mcr++) {
-      mhUpdateVoigt<<<block_size, grid_size>>>(spectra, 1, kappa, conc, wl, sample, tSample, mhChol, g0_Det, gi_Det, basisMx, precMx, eigVal, xTx, aMx, ruMx, rUnif, stdNorm);
+      mhUpdateVoigt<<<block_size, grid_size>>>(d_spectra, 1, kappa, conc, d_wavenum, d_sample, d_tSample, d_mhChol, g0_Det, gi_Det, d_basisMx, d_precMx, d_eigVal, d_xTx, d_aMx, d_ruMx, rUnif, stdNorm);
       cudaDeviceSynchronize();
     }
+    cout << "Finished jiggle." << std::flush;
 }
