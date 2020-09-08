@@ -180,7 +180,7 @@ int main() {
 
         // Resampling
         ArrayXi idx = metropolisResampling(sample(all, weightMask), sample, tSample, weightMask);
-        std::set<int> q{idx.begin(), idx.end()}; // get a count for how many unique
+        std::set<int> q{ sample.col(0).array().begin(), sample.col(0).array().end()}; // get a count for how many unique
         cout << "Resampled unique count: " << q.size() << endl;
 
         // Move particles
@@ -193,7 +193,7 @@ int main() {
     } while (kappa < 1);
 
     // Write the results to disk
-    writeToCSVfile("sample.csv", sample);
+    writeToCSVfile("sample.csv", sample(all, locationMask));
 }
 
 void writeToCSVfile(string name, MatrixXd matrix) {
@@ -213,9 +213,9 @@ void generateMoveRandomVariables(Eigen::Ref<ArrayXd> rUnif, Eigen::Ref<ArrayXd> 
   std::normal_distribution<double> sampleStandardNormal{0,1};
 
   cout << "Uniform." << std::flush;
-  //for (int i = 0; i < nPart; i++) rUnif(i) = sampleUniform(generator);
+  for (int i = 0; i < nPart; i++) rUnif(i) = sampleUniform(generator);
   cout << "Normal." << std::flush;
-  //for (int i = 0; i < (nPK * nPart * 4); i++) stdNorm(i) = sampleUniform(generator);
+  for (int i = 0; i < (nPK * nPart * 4); i++) stdNorm(i) = sampleUniform(generator);
   cout << "Done." << std::flush;
 }
 
@@ -252,8 +252,8 @@ void moveParticles(Eigen::Ref<Eigen::MatrixXd> sample, Eigen::Ref<Eigen::MatrixX
   cudaMemcpy(d_sample, sample.data(), getSize(sample), cudaMemcpyHostToDevice);
   cudaMemcpy(d_tSample, tSample.data(), getSize(sample), cudaMemcpyHostToDevice);
   jiggleParticles(d_spectra, 1, kappa, conc, d_wl, d_mhChol, g0_Det, gi_Det, d_basisMx, d_precMx, d_eigVal, d_xTx, d_aMx, d_ruMx, rUnif, stdNorm, d_sample, d_tSample, grid_size, block_size);
-  cudaMemcpy(d_sample, sample.data(), getSize(sample), cudaMemcpyHostToDevice);
-  cudaMemcpy(d_tSample, tSample.data(), getSize(sample), cudaMemcpyHostToDevice);
+  cudaMemcpy(sample.data(), d_sample, getSize(sample), cudaMemcpyDeviceToHost);
+  cudaMemcpy(tSample.data(), d_tSample, getSize(sample), cudaMemcpyDeviceToHost);
 }
 
 ArrayXi metropolisResampling(ArrayXd weights, Eigen::Ref<Eigen::MatrixXd> sample, Eigen::Ref<Eigen::MatrixXd> tSample, int weightMask) {

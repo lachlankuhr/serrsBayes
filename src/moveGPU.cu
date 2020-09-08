@@ -233,6 +233,7 @@ void mhUpdateVoigt(double * d_spectra, unsigned n, double kappa, Eigen::VectorXd
         logThetaMx(pt,4*nPK+i+1) = oldLogLik(i);
         thetaMx(pt,4*nPK+i+1) = oldLogLik(i);
       }
+      printf("Accepted.\n");
     }
   }
 }
